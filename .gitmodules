@@ -1,0 +1,6 @@
+[submodule "lib/zdb"]
+	path = lib/zdb
+	url = ssh://hyrican@qoru.de:/home/hyrican/prog/zig/zdb
+[submodule "lib/zig-spoon"]
+	path = lib/zig-spoon
+	url = https://git.sr.ht/~leon_plickat/zig-spoon
