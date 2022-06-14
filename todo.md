@@ -1,10 +1,12 @@
 priority n-1
 ============
+copy cell
+paste cell
 delete cell
 delete row
 edit cell
+append row
 insert row
-display row number
 
 priority n-1
 ============

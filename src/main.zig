@@ -42,13 +42,6 @@ pub fn main() !void {
         .flags = 0,
     }, null);
 
-    var fds: [1]os.pollfd = undefined;
-    fds[0] = .{
-        .fd = term.tty.handle,
-        .events = os.POLL.IN,
-        .revents = undefined,
-    };
-
     try term.uncook();
     defer term.cook() catch {};
 
@@ -63,7 +56,27 @@ pub fn main() !void {
     defer term.setWindowTitle("bash") catch {};
     try term.updateContent();
 
+    try mainloop();
+}
+
+fn move_cursor(dx: i32, dy: i32) !void {
+    const new_x: i32 = @intCast(i32, cur_x) + dx;
+    const new_y: i32 = @intCast(i32, cur_y) + dy;
+    if (new_x < 0) cur_x = 0 else if (new_x > 99) cur_x = 99 else cur_x = @intCast(usize, new_x);
+    if (new_y < 0) cur_y = 0 else if (new_y > 99) cur_y = 99 else cur_y = @intCast(usize, new_y);
+    try term.updateContent();
+}
+
+fn mainloop() !void {
+    const large_step: i32 = 7;
     var buf: [16]u8 = undefined;
+    var fds: [1]os.pollfd = undefined;
+    fds[0] = .{
+        .fd = term.tty.handle,
+        .events = os.POLL.IN,
+        .revents = undefined,
+    };
+
     while (loop) {
         _ = try os.poll(&fds, -1);
 
@@ -76,35 +89,26 @@ pub fn main() !void {
                     break;
                 },
                 .codepoint => |cp| {
-                    if (cp == 'q') loop = false;
-                    break;
+                    _ = switch (cp) {
+                        'q' => {
+                            loop = false;
+                            break;
+                        },
+                        'h' => try move_cursor(-1, 0),
+                        'H' => try move_cursor(-large_step, 0),
+                        'l' => try move_cursor(1, 0),
+                        'L' => try move_cursor(large_step, 0),
+                        'k' => try move_cursor(0, -1),
+                        'K' => try move_cursor(0, -large_step),
+                        'j' => try move_cursor(0, 1),
+                        'J' => try move_cursor(0, large_step),
+                        else => {},
+                    };
                 },
-                .arrow_right => {
-                    // TODO: 99
-                    if (cur_x < 99) {
-                        cur_x += 1;
-                        try term.updateContent();
-                    }
-                },
-                .arrow_left => {
-                    if (cur_x > 0) {
-                        cur_x -= 1;
-                        try term.updateContent();
-                    }
-                },
-                .arrow_down => {
-                    // TODO: 99
-                    if (cur_y < 99) {
-                        cur_y += 1;
-                        try term.updateContent();
-                    }
-                },
-                .arrow_up => {
-                    if (cur_y > 0) {
-                        cur_y -= 1;
-                        try term.updateContent();
-                    }
-                },
+                .arrow_left => try move_cursor(-1, 0),
+                .arrow_right => try move_cursor(1, 0),
+                .arrow_up => try move_cursor(0, -1),
+                .arrow_down => try move_cursor(0, 1),
                 else => {},
             }
         }
