@@ -18,6 +18,10 @@ var cur_x: usize = 0;
 var cur_y: usize = 0;
 var renderTable: Table = undefined;
 
+const Settings = struct {
+    const unused_column_width: usize = 10;
+};
+
 pub fn main() !void {
     var t1 = Table.fromCSV("io") catch
         Table.init("io") catch {
@@ -26,7 +30,7 @@ pub fn main() !void {
     defer t1.deinit();
     renderTable = t1;
 
-    try t1.write(std.io.getStdOut().writer());
+    // try t1.write(std.io.getStdOut().writer());
     try t1.save();
 
     try term.init(render);
@@ -56,6 +60,7 @@ pub fn main() !void {
     defer title.deinit();
     try title.writer().print("db/{s}.csv - zspread", .{renderTable.name.items});
     try term.setWindowTitle(title.items);
+    defer term.setWindowTitle("bash") catch {};
     try term.updateContent();
 
     var buf: [16]u8 = undefined;
@@ -104,7 +109,6 @@ pub fn main() !void {
             }
         }
     }
-    try term.setWindowTitle("bash");
 }
 
 fn render(_: *spoon.Term, _: usize, columns: usize) !void {
@@ -116,59 +120,73 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     remaining_columns = try term.writeLine(remaining_columns, renderTable.name.items);
     try term.writeByteNTimes(' ', remaining_columns);
 
-    // get the width and starting term column of every table column
+    // variable definitions
+    var cur_y_offset: usize = 1;
+    var col_total_width: usize = 0;
+    const cols = renderTable.columns.items;
+    var line = std.ArrayList(u8).init(croc);
+    defer line.deinit();
+
+    // calculate the width and starting term column of every table column
+    // if the cursor is outside existing columns, calculate positions of not (yet) existing columns as well
     var term_col_width = std.ArrayList(usize).init(croc);
     defer term_col_width.deinit();
     var term_col_pos = std.ArrayList(usize).init(croc);
     defer term_col_pos.deinit();
-    var col_total_width: usize = 0;
-    for (renderTable.columns.items) |col| {
+
+    var col_idx: usize = 0;
+    while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
         try term_col_pos.append(col_total_width);
-        const col_width = try col.max_width();
+        const col_width = if (col_idx < cols.len) try cols[col_idx].max_width() else Settings.unused_column_width;
         try term_col_width.append(col_width);
         col_total_width += col_width + 1;
     }
 
     // print column names
-    var render_row: usize = 1;
-    for (renderTable.columns.items) |col, idx| {
-        try term.moveCursorTo(render_row, term_col_pos.items[idx]);
+    col_idx = 0;
+    while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
+        try term.moveCursorTo(cur_y_offset, term_col_pos.items[col_idx]);
         try term.setAttribute(.{ .fg = .red, .bold = true });
-        _ = try term.writeAll(col.name.items);
+        // non-existing columns
+        if (col_idx >= cols.len) {
+            try line.resize(0);
+            try line.writer().print("column {d}", .{col_idx + 1});
+        }
+        const name = if (col_idx < cols.len) cols[col_idx].name.items else line.items;
+        _ = try term.writeAll(name);
     }
 
     // print column contents
-    render_row += 1;
-    var line = std.ArrayList(u8).init(croc);
-    defer line.deinit();
+    cur_y_offset += 1;
+    var has_more = cols.len > 0 and cols[0].rows.items.len > 0;
     var row_idx: usize = 0;
-    var has_more: bool = false;
-    if (renderTable.columns.items.len > 0) {
-        const col0 = renderTable.columns.items[0];
-        if (col0.rows.items.len > 0) {
-            has_more = true;
-        }
-    }
-    //has_more = renderTable.columns.items.len > 0 and renderTable.columns.items[0].rows.items.len > 0;
-
-    while (has_more) : (row_idx += 1) {
+    // loop rows
+    while (has_more or row_idx <= cur_y) : (row_idx += 1) {
         has_more = false;
-        for (renderTable.columns.items) |col, idx| {
+
+        // loop columns
+        col_idx = 0;
+        while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
+            const rows = if (col_idx < cols.len) cols[col_idx].rows.items else undefined;
             // check for every column - if any column has data, continue loop
-            if (col.rows.items.len > row_idx + 1) {
+            if (col_idx < cols.len and row_idx + 1 < rows.len) {
                 has_more = true;
             }
 
-            if (col.rows.items.len > row_idx) {
-                const row = col.rows.items[row_idx];
-                try row.write(line.writer());
-                try term.moveCursorTo(render_row + row_idx, term_col_pos.items[idx]);
-                try term.setAttribute(.{ .fg = .blue, .reverse = (cur_x == idx and cur_y == row_idx) });
-                var remaining = try term.writeLine(term_col_width.items[idx], line.items);
-                if (idx + 1 < renderTable.columns.items.len) remaining += 1;
-                try term.writeByteNTimes(' ', remaining);
+            try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[col_idx]);
+            try term.setAttribute(.{ .fg = .blue, .reverse = (cur_x == col_idx and cur_y == row_idx) });
+
+            if (col_idx < cols.len and row_idx < rows.len) {
                 try line.resize(0);
+                try rows[row_idx].write(line.writer());
+                var remaining = try term.writeLine(term_col_width.items[col_idx], line.items);
+                if (col_idx + 1 < cols.len) remaining += 1;
+                try term.writeByteNTimes(' ', remaining);
+            } else {
+                const remaining = term_col_width.items[col_idx];
+                try term.writeByteNTimes(' ', remaining);
             }
+            try line.resize(0);
         }
     }
 }

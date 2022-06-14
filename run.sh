@@ -5,8 +5,12 @@ clear
 #head -$((LINES-4)) out | cut -b-$COLUMNS
 #rm out
 
+ps -u willem -eo comm | grep -wq zspread && {
+    kill `ps -u willem -eo comm,pid | awk '/zspread/ { print $2 }'`
+}
+
 zig build test 2>&1 | cat
-zig build run
+zig build run &
 
 #echo --------------------------------------------------------------------------------
 inotifywait --format %w -q -e close_write src/*.zig build.zig lib/zdb/build.zig lib/zdb/src/*.zig
