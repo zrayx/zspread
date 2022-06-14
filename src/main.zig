@@ -120,12 +120,13 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     remaining_columns = try term.writeLine(remaining_columns, renderTable.name.items);
     try term.writeByteNTimes(' ', remaining_columns);
 
-    // variable definitions
+    // constants and variables
     var cur_y_offset: usize = 1;
     var col_total_width: usize = 0;
     const cols = renderTable.columns.items;
     var line = std.ArrayList(u8).init(croc);
     defer line.deinit();
+    const col1_name = "row#";
 
     // calculate the width and starting term column of every table column
     // if the cursor is outside existing columns, calculate positions of not (yet) existing columns as well
@@ -134,18 +135,26 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     var term_col_pos = std.ArrayList(usize).init(croc);
     defer term_col_pos.deinit();
 
+    try term_col_pos.append(col_total_width);
+    col_total_width += col1_name.len + 1;
+    try term_col_width.append(col1_name.len + 1);
+
     var col_idx: usize = 0;
     while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
         try term_col_pos.append(col_total_width);
         const col_width = if (col_idx < cols.len) try cols[col_idx].max_width() else Settings.unused_column_width;
-        try term_col_width.append(col_width);
         col_total_width += col_width + 1;
+        try term_col_width.append(col_width);
     }
 
     // print column names
+
+    try term.moveCursorTo(cur_y_offset, term_col_pos.items[0]);
+    try term.setAttribute(.{ .fg = .red, .bold = true });
+    _ = try term.writeAll("row#");
     col_idx = 0;
     while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
-        try term.moveCursorTo(cur_y_offset, term_col_pos.items[col_idx]);
+        try term.moveCursorTo(cur_y_offset, term_col_pos.items[col_idx + 1]);
         try term.setAttribute(.{ .fg = .red, .bold = true });
         // non-existing columns
         if (col_idx >= cols.len) {
@@ -164,6 +173,13 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     while (has_more or row_idx <= cur_y) : (row_idx += 1) {
         has_more = false;
 
+        // print row number
+        try term.setAttribute(.{ .fg = .red, .bold = true });
+        try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[0]);
+        try line.resize(0);
+        try line.writer().print("{d}", .{row_idx + 1});
+        _ = try term.writeLine(term_col_width.items[0], line.items);
+
         // loop columns
         col_idx = 0;
         while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
@@ -173,17 +189,17 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
                 has_more = true;
             }
 
-            try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[col_idx]);
+            try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[col_idx + 1]);
             try term.setAttribute(.{ .fg = .blue, .reverse = (cur_x == col_idx and cur_y == row_idx) });
 
             if (col_idx < cols.len and row_idx < rows.len) {
                 try line.resize(0);
                 try rows[row_idx].write(line.writer());
-                var remaining = try term.writeLine(term_col_width.items[col_idx], line.items);
+                var remaining = try term.writeLine(term_col_width.items[col_idx + 1], line.items);
                 if (col_idx + 1 < cols.len) remaining += 1;
                 try term.writeByteNTimes(' ', remaining);
             } else {
-                const remaining = term_col_width.items[col_idx];
+                const remaining = term_col_width.items[col_idx + 1];
                 try term.writeByteNTimes(' ', remaining);
             }
             try line.resize(0);

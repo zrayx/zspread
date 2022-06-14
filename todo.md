@@ -4,6 +4,7 @@ delete cell
 delete row
 edit cell
 insert row
+display row number
 
 priority n-1
 ============
