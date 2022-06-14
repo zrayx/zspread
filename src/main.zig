@@ -14,15 +14,25 @@ const Value = @import("value").Value;
 var term: spoon.Term = undefined;
 var loop: bool = true;
 
-var cur_x: usize = 0;
-var cur_y: usize = 0;
 var renderTable: Table = undefined;
 
 const Settings = struct {
     const unused_column_width: usize = 10;
 };
 
+const Pos = struct {
+    x: usize,
+    y: usize,
+};
+var cur = Pos{ .x = 0, .y = 0 };
+var copy_cur: ?Pos = null;
+
+var file: std.fs.File = undefined;
+
 pub fn main() !void {
+    file = try std.fs.cwd().createFile("zspread.log", .{});
+    defer file.close();
+
     var t1 = Table.fromCSV("io") catch
         Table.init("io") catch {
         @panic("");
@@ -59,16 +69,58 @@ pub fn main() !void {
     try mainloop();
 }
 
-fn move_cursor(dx: i32, dy: i32) !void {
-    const new_x: i32 = @intCast(i32, cur_x) + dx;
-    const new_y: i32 = @intCast(i32, cur_y) + dy;
-    if (new_x < 0) cur_x = 0 else if (new_x > 99) cur_x = 99 else cur_x = @intCast(usize, new_x);
-    if (new_y < 0) cur_y = 0 else if (new_y > 99) cur_y = 99 else cur_y = @intCast(usize, new_y);
+fn moveCursor(dx: i32, dy: i32) !void {
+    const new_x: i32 = @intCast(i32, cur.x) + dx;
+    const new_y: i32 = @intCast(i32, cur.y) + dy;
+    if (new_x < 0) cur.x = 0 else if (new_x > 99) cur.x = 99 else cur.x = @intCast(usize, new_x);
+    if (new_y < 0) cur.y = 0 else if (new_y > 99) cur.y = 99 else cur.y = @intCast(usize, new_y);
+    try term.updateContent();
+}
+
+fn copy() !void {
+    //_ = renderTable.getAt(cur.x, cur.y) catch {
+    //copy_cur = null;
+    //return;
+    //};
+    copy_cur = cur;
+}
+
+fn paste() !void {
+    if (copy_cur != null) {
+        var value: Value = undefined;
+        if (renderTable.getAt(copy_cur.?.x, copy_cur.?.y)) |v| {
+            value = try v.clone();
+        } else |_| {
+            value = try Value.parse("");
+        }
+        try setAt(cur.x, cur.y, value);
+    }
+}
+
+fn setAt(new_x: usize, new_y: usize, v: Value) !void {
+    var line = std.ArrayList(u8).init(croc);
+    defer line.deinit();
+    var x = new_x;
+    var y = new_y;
+
+    while (renderTable.columns.items.len < x + 1) {
+        try file.writer().print("Adding column {d}\n", .{renderTable.columns.items.len + 1});
+        try line.resize(0);
+        try line.writer().print("column {d}", .{renderTable.columns.items.len + 1});
+        try renderTable.addColumn(line.items);
+    }
+
+    while (renderTable.columns.items[x].rows.items.len < y + 1) {
+        try file.writer().print("Adding row {d}\n", .{renderTable.columns.items[x].rows.items.len});
+        try renderTable.appendAt(x, try Value.parse(""));
+    }
+    try renderTable.replaceAt(x, y, v);
     try term.updateContent();
 }
 
 fn mainloop() !void {
     const large_step: i32 = 7;
+    const huge_step: i32 = 30;
     var buf: [16]u8 = undefined;
     var fds: [1]os.pollfd = undefined;
     fds[0] = .{
@@ -89,26 +141,34 @@ fn mainloop() !void {
                     break;
                 },
                 .codepoint => |cp| {
+                    var step: i32 = if (in.mod_ctrl) huge_step else 1;
                     _ = switch (cp) {
+                        // copy & paste
+                        'c' => if (in.mod_ctrl) try copy(),
+                        'v' => if (in.mod_ctrl) try paste(),
+                        // end program
                         'q' => {
                             loop = false;
                             break;
                         },
-                        'h' => try move_cursor(-1, 0),
-                        'H' => try move_cursor(-large_step, 0),
-                        'l' => try move_cursor(1, 0),
-                        'L' => try move_cursor(large_step, 0),
-                        'k' => try move_cursor(0, -1),
-                        'K' => try move_cursor(0, -large_step),
-                        'j' => try move_cursor(0, 1),
-                        'J' => try move_cursor(0, large_step),
+
+                        // movement
+                        'h' => try moveCursor(-step, 0),
+                        'H' => try moveCursor(-large_step, 0),
+                        'l' => try moveCursor(step, 0),
+                        'L' => try moveCursor(large_step, 0),
+                        'k' => try moveCursor(0, -step),
+                        'K' => try moveCursor(0, -large_step),
+                        // note: ctrl-j is translated by the linux terminal to \r, so wont work as expected
+                        'j' => try moveCursor(0, step),
+                        'J' => try moveCursor(0, large_step),
                         else => {},
                     };
                 },
-                .arrow_left => try move_cursor(-1, 0),
-                .arrow_right => try move_cursor(1, 0),
-                .arrow_up => try move_cursor(0, -1),
-                .arrow_down => try move_cursor(0, 1),
+                .arrow_left => try moveCursor(-1, 0),
+                .arrow_right => try moveCursor(1, 0),
+                .arrow_up => try moveCursor(0, -1),
+                .arrow_down => try moveCursor(0, 1),
                 else => {},
             }
         }
@@ -144,9 +204,9 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     try term_col_width.append(col1_name.len + 1);
 
     var col_idx: usize = 0;
-    while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
+    while (col_idx < cols.len or col_idx <= cur.x) : (col_idx += 1) {
         try term_col_pos.append(col_total_width);
-        const col_width = if (col_idx < cols.len) try cols[col_idx].max_width() else Settings.unused_column_width;
+        const col_width = if (col_idx < cols.len) try cols[col_idx].maxWidth() else Settings.unused_column_width;
         col_total_width += col_width + 1;
         try term_col_width.append(col_width);
     }
@@ -157,7 +217,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     try term.setAttribute(.{ .fg = .red, .bold = true });
     _ = try term.writeAll("row#");
     col_idx = 0;
-    while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
+    while (col_idx < cols.len or col_idx <= cur.x) : (col_idx += 1) {
         try term.moveCursorTo(cur_y_offset, term_col_pos.items[col_idx + 1]);
         try term.setAttribute(.{ .fg = .red, .bold = true });
         // non-existing columns
@@ -174,7 +234,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     var has_more = cols.len > 0 and cols[0].rows.items.len > 0;
     var row_idx: usize = 0;
     // loop rows
-    while (has_more or row_idx <= cur_y) : (row_idx += 1) {
+    while (has_more or row_idx <= cur.y) : (row_idx += 1) {
         has_more = false;
 
         // print row number
@@ -186,7 +246,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
 
         // loop columns
         col_idx = 0;
-        while (col_idx < cols.len or col_idx <= cur_x) : (col_idx += 1) {
+        while (col_idx < cols.len or col_idx <= cur.x) : (col_idx += 1) {
             const rows = if (col_idx < cols.len) cols[col_idx].rows.items else undefined;
             // check for every column - if any column has data, continue loop
             if (col_idx < cols.len and row_idx + 1 < rows.len) {
@@ -194,7 +254,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
             }
 
             try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[col_idx + 1]);
-            try term.setAttribute(.{ .fg = .blue, .reverse = (cur_x == col_idx and cur_y == row_idx) });
+            try term.setAttribute(.{ .fg = .blue, .reverse = (cur.x == col_idx and cur.y == row_idx) });
 
             if (col_idx < cols.len and row_idx < rows.len) {
                 try line.resize(0);
