@@ -27,12 +27,7 @@ const Pos = struct {
 var cur = Pos{ .x = 0, .y = 0 };
 var copy_cur: ?Pos = null;
 
-var file: std.fs.File = undefined;
-
 pub fn main() !void {
-    file = try std.fs.cwd().createFile("zspread.log", .{});
-    defer file.close();
-
     var t1 = Table.fromCSV("io") catch
         Table.init("io") catch {
         @panic("");
@@ -103,15 +98,35 @@ fn delete() !void {
 }
 
 fn deleteColumn() !void {
-    try file.writer().print("Deleting column {d}\n", .{cur.x});
+    if (copy_cur != null) {
+        if (copy_cur.?.x == cur.x) {
+            copy_cur = null;
+        } else if (copy_cur.?.x > cur.x) {
+            copy_cur.?.x -= 1;
+        }
+    }
     renderTable.deleteColumnAt(cur.x) catch |e| {
-        if (e == error.InvalidPosition) {}
+        if (e != error.InvalidPosition) {
+            return e;
+        }
     };
     try term.updateContent();
 }
 
 fn deleteRow() !void {
-    //renderTable.deleteRow(cur.y);
+    if (copy_cur != null) {
+        if (copy_cur.?.y == cur.y) {
+            copy_cur = null;
+        } else if (copy_cur.?.y > cur.y) {
+            copy_cur.?.y -= 1;
+        }
+    }
+    renderTable.deleteRowAt(cur.y) catch |e| {
+        if (e != error.InvalidPosition) {
+            return e;
+        }
+    };
+    try term.updateContent();
     {}
 }
 
@@ -122,9 +137,16 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
     var y = new_y;
 
     while (renderTable.columns.items.len < x + 1) {
-        try line.resize(0);
-        try line.writer().print("column {d}", .{renderTable.columns.items.len + 1});
-        try renderTable.addColumn(line.items);
+        var giveup_count = renderTable.columns.items.len;
+        var adder: usize = 0;
+        while (adder < giveup_count) : (adder += 1) {
+            try line.resize(0);
+            try line.writer().print("column {d}", .{renderTable.columns.items.len + 1 + adder});
+            renderTable.addColumn(line.items) catch |e| {
+                if (e == error.ColumnExists) continue;
+            };
+            break;
+        }
     }
 
     while (renderTable.columns.items[x].rows.items.len < y + 1) {

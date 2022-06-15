@@ -11,7 +11,8 @@ ps -u willem -eo comm | grep -wq zspread && {
 
 #(cd lib/zdb/ && zig build test; echo -----------------------------------------)
 #zig build test 2>&1 | cat
-zig build run & 2>zspread.log
+zig build run 2>zspread.log &
+echo -------------------------------------------------------------------------------- >> zspread.log
 
 #echo --------------------------------------------------------------------------------
 inotifywait --format %w -q -e close_write src/*.zig build.zig lib/zdb/build.zig lib/zdb/src/*.zig

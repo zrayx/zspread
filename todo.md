@@ -1,5 +1,6 @@
 priority n-1
 ============
+copy/paste doesn't copy but reference value
 delete column
   'dc'?
     should 'c' stand for cell or column?
@@ -23,3 +24,4 @@ mark ranges
   ctrl+space: mark row
   shift+space: mark column
     but shift+space won't work in terminal
+copy/paste/cut uses temp table instead of position/range
