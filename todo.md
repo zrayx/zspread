@@ -1,13 +1,26 @@
 priority n-1
 ============
-copy cell
-paste cell
 delete cell
+  'x' or 'd ' or 'dc'
+delete column
+  'dc'?
+    should 'c' stand for cell or column?
+      dc - delete cell/column
+      yc - yank cell/column
 delete row
+  'dd'
 edit cell
-append row
-insert row
+  'i': insert
+  'C': replace
 
 priority n-1
 ============
 wrap columns/lines when cursor is outside current window
+insert row
+insert column
+
+priority n-1
+============
+mark ranges
+  ctrl+space: mark row
+  shift+space: mark column

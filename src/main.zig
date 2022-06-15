@@ -97,6 +97,10 @@ fn paste() !void {
     }
 }
 
+fn delete() !void {
+    try setAt(cur.x, cur.y, try Value.parse(""));
+}
+
 fn setAt(new_x: usize, new_y: usize, v: Value) !void {
     var line = std.ArrayList(u8).init(croc);
     defer line.deinit();
@@ -141,29 +145,38 @@ fn mainloop() !void {
                     break;
                 },
                 .codepoint => |cp| {
-                    var step: i32 = if (in.mod_ctrl) huge_step else 1;
-                    _ = switch (cp) {
-                        // copy & paste
-                        'c' => if (in.mod_ctrl) try copy(),
-                        'v' => if (in.mod_ctrl) try paste(),
-                        // end program
-                        'q' => {
-                            loop = false;
-                            break;
-                        },
-
-                        // movement
-                        'h' => try moveCursor(-step, 0),
-                        'H' => try moveCursor(-large_step, 0),
-                        'l' => try moveCursor(step, 0),
-                        'L' => try moveCursor(large_step, 0),
-                        'k' => try moveCursor(0, -step),
-                        'K' => try moveCursor(0, -large_step),
-                        // note: ctrl-j is translated by the linux terminal to \r, so wont work as expected
-                        'j' => try moveCursor(0, step),
-                        'J' => try moveCursor(0, large_step),
-                        else => {},
-                    };
+                    if (in.mod_ctrl) {
+                        _ = switch (cp) {
+                            // copy & paste
+                            'c' => try copy(),
+                            'v' => try paste(),
+                            // movement
+                            'h' => try moveCursor(-huge_step, 0),
+                            'l' => try moveCursor(huge_step, 0),
+                            'k' => try moveCursor(0, -huge_step),
+                            'j' => try moveCursor(0, huge_step), // note: ctrl-j is translated by the linux terminal to \r, so won't work as expected
+                            else => {},
+                        };
+                    } else {
+                        _ = switch (cp) {
+                            'x' => try delete(),
+                            // end program
+                            'q' => {
+                                loop = false;
+                                break;
+                            },
+                            // movement
+                            'h' => try moveCursor(-1, 0),
+                            'H' => try moveCursor(-large_step, 0),
+                            'l' => try moveCursor(1, 0),
+                            'L' => try moveCursor(large_step, 0),
+                            'k' => try moveCursor(0, -1),
+                            'K' => try moveCursor(0, -large_step),
+                            'j' => try moveCursor(0, 1),
+                            'J' => try moveCursor(0, large_step),
+                            else => {},
+                        };
+                    }
                 },
                 .arrow_left => try moveCursor(-1, 0),
                 .arrow_right => try moveCursor(1, 0),
