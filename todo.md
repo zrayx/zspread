@@ -1,16 +1,20 @@
 priority n-1
 ============
 copy/paste doesn't copy but reference value
-delete column
-  'dc'?
-    should 'c' stand for cell or column?
-      dc - delete cell/column
-      yc - yank cell/column
-delete row
-  'dd'
 edit cell
+  'a': append
   'i': insert
   'C': replace
+editor:
+  ctrl modifier
+    'h': backspace
+    'b': cursor_left
+    'f': cursor_right
+  render cursor
+  move with cursor keys
+  move with VI movement keys
+handle utf8
+    https://zig.news/dude_the_builder/unicode-basics-in-zig-dj3
 
 priority n-1
 ============
