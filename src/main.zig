@@ -99,6 +99,20 @@ fn paste() !void {
 
 fn delete() !void {
     try setAt(cur.x, cur.y, try Value.parse(""));
+    try term.updateContent();
+}
+
+fn deleteColumn() !void {
+    try file.writer().print("Deleting column {d}\n", .{cur.x});
+    renderTable.deleteColumnAt(cur.x) catch |e| {
+        if (e == error.InvalidPosition) {}
+    };
+    try term.updateContent();
+}
+
+fn deleteRow() !void {
+    //renderTable.deleteRow(cur.y);
+    {}
 }
 
 fn setAt(new_x: usize, new_y: usize, v: Value) !void {
@@ -108,14 +122,12 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
     var y = new_y;
 
     while (renderTable.columns.items.len < x + 1) {
-        try file.writer().print("Adding column {d}\n", .{renderTable.columns.items.len + 1});
         try line.resize(0);
         try line.writer().print("column {d}", .{renderTable.columns.items.len + 1});
         try renderTable.addColumn(line.items);
     }
 
     while (renderTable.columns.items[x].rows.items.len < y + 1) {
-        try file.writer().print("Adding row {d}\n", .{renderTable.columns.items[x].rows.items.len});
         try renderTable.appendAt(x, try Value.parse(""));
     }
     try renderTable.replaceAt(x, y, v);
@@ -132,48 +144,59 @@ fn mainloop() !void {
         .events = os.POLL.IN,
         .revents = undefined,
     };
+    var mode_key: u8 = 0;
 
-    while (loop) {
+    loop: while (loop) {
         _ = try os.poll(&fds, -1);
 
         const read = try term.readInput(&buf);
         var it = spoon.inputParser(buf[0..read]);
         while (it.next()) |in| {
             switch (in.content) {
-                .escape => {
-                    loop = false;
-                    break;
-                },
+                .escape => break :loop,
                 .codepoint => |cp| {
+                    _ = switch (mode_key) {
+                        0 => {
+                            _ = switch (cp) {
+                                'd' => {
+                                    mode_key = 'd';
+                                    break;
+                                },
+                                else => {},
+                            };
+                        },
+                        else => {},
+                    };
                     if (in.mod_ctrl) {
                         _ = switch (cp) {
-                            // copy & paste
                             'c' => try copy(),
-                            'v' => try paste(),
-                            // movement
                             'h' => try moveCursor(-huge_step, 0),
-                            'l' => try moveCursor(huge_step, 0),
-                            'k' => try moveCursor(0, -huge_step),
                             'j' => try moveCursor(0, huge_step), // note: ctrl-j is translated by the linux terminal to \r, so won't work as expected
+                            'k' => try moveCursor(0, -huge_step),
+                            'l' => try moveCursor(huge_step, 0),
+                            'v' => try paste(),
                             else => {},
                         };
                     } else {
                         _ = switch (cp) {
-                            'x' => try delete(),
-                            // end program
-                            'q' => {
-                                loop = false;
-                                break;
-                            },
-                            // movement
-                            'h' => try moveCursor(-1, 0),
                             'H' => try moveCursor(-large_step, 0),
-                            'l' => try moveCursor(1, 0),
-                            'L' => try moveCursor(large_step, 0),
-                            'k' => try moveCursor(0, -1),
-                            'K' => try moveCursor(0, -large_step),
-                            'j' => try moveCursor(0, 1),
                             'J' => try moveCursor(0, large_step),
+                            'K' => try moveCursor(0, -large_step),
+                            'L' => try moveCursor(large_step, 0),
+                            'c' => if (mode_key == 'd') {
+                                mode_key = 0;
+                                try deleteColumn();
+                            },
+                            'd' => if (mode_key == 'd') {
+                                mode_key = 0;
+                                try deleteRow();
+                            },
+                            'h' => try moveCursor(-1, 0),
+                            'j' => try moveCursor(0, 1),
+                            'k' => try moveCursor(0, -1),
+                            'l' => try moveCursor(1, 0),
+                            'q' => break :loop,
+                            'x' => try delete(),
                             else => {},
                         };
                     }

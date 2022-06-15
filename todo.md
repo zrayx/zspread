@@ -1,7 +1,5 @@
 priority n-1
 ============
-delete cell
-  'x' or 'd ' or 'dc'
 delete column
   'dc'?
     should 'c' stand for cell or column?
@@ -24,3 +22,4 @@ priority n-1
 mark ranges
   ctrl+space: mark row
   shift+space: mark column
+    but shift+space won't work in terminal
