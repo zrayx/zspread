@@ -17,7 +17,7 @@ var loop: bool = true;
 var renderTable: Table = undefined;
 
 const Settings = struct {
-    const unused_column_width: usize = 10;
+    const unused_column_width: usize = 13;
 };
 
 const Pos = struct {
@@ -37,9 +37,6 @@ pub fn main() !void {
     };
     defer t1.deinit();
     renderTable = t1;
-
-    // try t1.write(std.io.getStdOut().writer());
-    try t1.save();
 
     try term.init(render);
     defer term.deinit();
@@ -65,6 +62,7 @@ pub fn main() !void {
     try term.updateContent();
 
     try mainloop();
+    try renderTable.save();
 }
 
 fn moveCursor(dx: i32, dy: i32) !void {
@@ -140,7 +138,7 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
     var y = new_y;
 
     while (renderTable.columns.items.len < x + 1) {
-        var giveup_count = renderTable.columns.items.len;
+        var giveup_count = renderTable.columns.items.len + 1;
         var adder: usize = 0;
         while (adder < giveup_count) : (adder += 1) {
             try line.resize(0);
@@ -148,6 +146,7 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
             renderTable.addColumn(line.items) catch |e| {
                 if (e == error.ColumnExists) continue;
             };
+            std.debug.print("Adding column {s}\n", .{line.items});
             break;
         }
     }
@@ -366,7 +365,6 @@ pub const Editor = struct {
     pub fn insert(self: *Self, char: u8) !void {
         try self.content.insert(self.cur.x, char);
         self.cur.x += 1;
-        std.debug.print("Editor.content: {s}, len={d}, cur.x={d}\n", .{ self.content.items, self.len(), self.cur.x });
     }
 
     pub fn set(self: *Self, string: []const u8) !void {
@@ -381,10 +379,6 @@ pub const Editor = struct {
     }
 };
 
-fn edit() !void {
-    {}
-}
-
 fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     var line = std.ArrayList(u8).init(croc);
     defer line.deinit();
@@ -395,12 +389,13 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     try term.setAttribute(.{ .fg = .green, .reverse = true });
 
     try line.resize(0);
-    try line.writer().print("Table: {s} - {s}", .{ renderTable.name.items, switch (mode_key) {
+    const mode_name: []const u8 = switch (mode_key) {
         0 => "normal",
         'd' => "delete",
         'i' => "insert",
         else => @panic("Unknown mode"),
-    } });
+    };
+    try line.writer().print("Table: {s} - {s}", .{ renderTable.name.items, mode_name });
     var remaining_columns = try term.writeLine(columns, line.items);
     try term.writeByteNTimes(' ', remaining_columns);
 
@@ -433,7 +428,6 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     }
 
     // print column names
-
     try term.moveCursorTo(cur_y_offset, term_col_pos.items[0]);
     try term.setAttribute(.{ .fg = .red, .bold = true });
     _ = try term.writeAll("row#");
@@ -444,7 +438,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
         // non-existing columns
         if (col_idx >= cols.len) {
             try line.resize(0);
-            try line.writer().print("column {d}", .{col_idx + 1});
+            try line.writer().print("new column {d}", .{col_idx + 1 - cols.len});
         }
         const name = if (col_idx < cols.len) cols[col_idx].name.items else line.items;
         _ = try term.writeAll(name);

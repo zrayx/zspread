@@ -1,7 +1,10 @@
 priority n-1
 ============
-copy/paste doesn't copy but reference value
+cursor not displayed when table has 0 columns
+edit title
 edit cell
+  Tab: edits cell to the right
+  CR : edits cell below
   'a': append
   'i': insert
   'C': replace
