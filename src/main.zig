@@ -5,6 +5,7 @@ const os = std.os;
 const testing = std.testing;
 const unicode = std.unicode;
 const croc = std.testing.allocator;
+const dbg = std.debug.print;
 
 const spoon = @import("spoon");
 
@@ -86,7 +87,7 @@ fn paste() !void {
         if (renderTable.getAt(copy_cur.?.x, copy_cur.?.y)) |v| {
             value = try v.clone();
         } else |_| {
-            value = try Value.parse("");
+            value = Value.empty;
         }
         try setAt(cur.x, cur.y - 1, value);
     }
@@ -94,7 +95,7 @@ fn paste() !void {
 
 fn delete() !void {
     if (cur.y != 0) {
-        try setAt(cur.x, cur.y - 1, try Value.parse(""));
+        try setAt(cur.x, cur.y - 1, Value.empty);
         try term.updateContent();
     }
 }
@@ -134,11 +135,10 @@ fn deleteRow() !void {
     }
 }
 
-fn setAt(new_x: usize, new_y: usize, v: Value) !void {
+fn expandColumns(new_x: usize) !void {
     var line = std.ArrayList(u8).init(croc);
     defer line.deinit();
     var x = new_x;
-    var y = new_y;
 
     while (renderTable.columns.items.len < x + 1) {
         var giveup_count = renderTable.columns.items.len + 1;
@@ -149,16 +149,60 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
             renderTable.addColumn(line.items) catch |e| {
                 if (e == error.ColumnExists) continue;
             };
-            std.debug.print("Adding column {s}\n", .{line.items});
             break;
         }
     }
+}
+
+fn setAt(new_x: usize, new_y: usize, v: Value) !void {
+    var line = std.ArrayList(u8).init(croc);
+    defer line.deinit();
+    var x = new_x;
+    var y = new_y;
+
+    try expandColumns(new_x);
 
     while (renderTable.columns.items[x].rows.items.len < y + 1) {
-        try renderTable.appendAt(x, try Value.parse(""));
+        try renderTable.appendAt(x, Value.empty);
     }
     try renderTable.replaceAt(x, y, v);
     try term.updateContent();
+}
+
+fn enterInsertMode(mode: u8) !void {
+    mode_key = mode;
+    try editor.deleteAll();
+    if (cur.x >= renderTable.columns.items.len) {
+        try expandColumns(cur.x);
+    }
+    if (mode_key == 'i' or mode_key == 'a') {
+        if (cur.y > 0) {
+            var line = std.ArrayList(u8).init(croc);
+            defer line.deinit();
+            const cols = renderTable.columns.items;
+            if (cur.x < cols.len) {
+                const rows = cols[cur.x].rows.items;
+                if (cur.y - 1 < rows.len) {
+                    const value = rows[cur.y - 1];
+                    try value.write(line.writer());
+                    try editor.set(line.items);
+                }
+            }
+        } else {
+            if (cur.x >= renderTable.columns.items.len) {
+                try expandColumns(cur.x);
+            }
+            try editor.set(renderTable.columns.items[cur.x].name.items);
+        }
+        if (mode_key == 'a') {
+            editor.end();
+            mode_key = 'i';
+        }
+    } else if (mode_key == 'C') {
+        mode_key = 'i';
+    } else {
+        @panic("Unkown mode key");
+    }
 }
 
 fn exitInsertMode() !void {
@@ -167,10 +211,10 @@ fn exitInsertMode() !void {
         renderTable.renameColumnAt(cur.x, editor.line()) catch {};
     } else {
         const value = try Value.parse(editor.line());
-        std.debug.print("exitInsertMode(): cur.y = {d}\n", .{cur.y});
         try setAt(cur.x, cur.y - 1, value);
     }
     try editor.deleteAll();
+    try renderTable.save(); // TODO: xxx
 }
 
 fn mainloop() !void {
@@ -204,8 +248,8 @@ fn mainloop() !void {
                                         mode_key = 'd';
                                         break;
                                     },
-                                    'i' => {
-                                        mode_key = 'i';
+                                    'C', 'a', 'i' => {
+                                        try enterInsertMode(@truncate(u8, cp));
                                         break;
                                     },
                                     else => {},
@@ -271,12 +315,12 @@ fn mainloop() !void {
                                 9 => { // Tab
                                     try exitInsertMode();
                                     cur.x += 1;
-                                    mode_key = 'i';
+                                    try enterInsertMode('a');
                                 },
                                 10 => { // Enter
                                     try exitInsertMode();
                                     cur.y += 1;
-                                    mode_key = 'i';
+                                    try enterInsertMode('a');
                                 },
                                 32...126 => try editor.insert(cp),
                                 127 => try editor.deleteLeftOfCursor(),
@@ -289,11 +333,11 @@ fn mainloop() !void {
                                 223 => try editor.insertMultiple("ß"),
                                 233 => try editor.insertMultiple("é"),
                                 else => {
-                                    std.debug.print("Unknown codepoint {}\n", .{cp});
+                                    dbg("Unknown codepoint {}\n", .{cp});
                                 },
                             };
                         } else {
-                            std.debug.print("Codepoint value {d} must be < 256", .{cp_u21});
+                            dbg("Codepoint value {d} must be < 256", .{cp_u21});
                             @panic("x");
                         }
                     },
@@ -308,7 +352,7 @@ fn mainloop() !void {
                     // .arrow_up  (also: mouse wheel)
                     // .arrow_down (also: mouse wheel)
                     else => {
-                        std.debug.print("Unknown in.content type {}\n", .{in.content});
+                        dbg("Unknown in.content type {}\n", .{in.content});
                     },
                 },
                 else => {},
@@ -344,6 +388,11 @@ pub const Editor = struct {
 
     pub fn right(self: *Self) void {
         if (self.len() > self.cur.x) self.cur.x += 1;
+    }
+
+    pub fn startOfText(self: *Self) void {
+        self.cur.x = 0;
+        self.cur.y = 0;
     }
 
     pub fn home(self: *Self) void {
@@ -384,7 +433,7 @@ pub const Editor = struct {
 
     pub fn set(self: *Self, string: []const u8) !void {
         try self.content.resize(0);
-        try self.content.append(string);
+        try self.content.appendSlice(string);
     }
 
     pub fn insertMultiple(self: *Self, string: []const u8) !void {
@@ -407,7 +456,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     const mode_name: []const u8 = switch (mode_key) {
         0 => "normal",
         'd' => "delete",
-        'i' => "insert",
+        'i', 'a' => "insert",
         else => @panic("Unknown mode"),
     };
     try line.writer().print("Table: {s} - {s}", .{ renderTable.name.items, mode_name });

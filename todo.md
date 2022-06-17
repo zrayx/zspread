@@ -1,22 +1,5 @@
 priority n-1
 ============
-keep text when editing a column
-resiliency against crashes
-  save on every edit?
-  any version control? backup saves?
-  save to backup, then move back on successful save?
-  save to backup, then load, then verify, then move to original file
-buggy when saving/loading zero or empty columns
-  can't edit name of empty column
-can't delete last line
-
-priority n-1
-============
-edit column name
-edit cell
-  'a': append
-  'i': insert
-  'C': replace
 editor:
   ctrl modifier
     'h': backspace
