@@ -24,19 +24,18 @@ const Pos = struct {
     x: usize,
     y: usize,
 };
-var cur = Pos{ .x = 0, .y = 0 };
+var cur = Pos{ .x = 0, .y = 1 };
 var copy_cur: ?Pos = null;
 var edit_line = std.ArrayList(u8).init(croc);
 var editor: Editor = undefined;
 var mode_key: u8 = 0;
 
 pub fn main() !void {
-    var t1 = Table.fromCSV("io") catch
+    renderTable = Table.fromCSV("io") catch
         Table.init("io") catch {
         @panic("");
     };
-    defer t1.deinit();
-    renderTable = t1;
+    defer renderTable.deinit();
 
     try term.init(render);
     defer term.deinit();
@@ -65,19 +64,19 @@ pub fn main() !void {
     try renderTable.save();
 }
 
+fn max(a: usize, b: usize) usize {
+    return if (a > b) a else b;
+}
+
 fn moveCursor(dx: i32, dy: i32) !void {
     const new_x: i32 = @intCast(i32, cur.x) + dx;
     const new_y: i32 = @intCast(i32, cur.y) + dy;
-    if (new_x < 0) cur.x = 0 else if (new_x > 99) cur.x = 99 else cur.x = @intCast(usize, new_x);
-    if (new_y < 0) cur.y = 0 else if (new_y > 99) cur.y = 99 else cur.y = @intCast(usize, new_y);
+    if (new_x < 0) cur.x = 0 else cur.x = @intCast(usize, new_x);
+    if (new_y < 0) cur.y = 0 else cur.y = @intCast(usize, new_y);
     try term.updateContent();
 }
 
 fn copy() !void {
-    //_ = renderTable.getAt(cur.x, cur.y) catch {
-    //copy_cur = null;
-    //return;
-    //};
     copy_cur = cur;
 }
 
@@ -89,13 +88,15 @@ fn paste() !void {
         } else |_| {
             value = try Value.parse("");
         }
-        try setAt(cur.x, cur.y, value);
+        try setAt(cur.x, cur.y - 1, value);
     }
 }
 
 fn delete() !void {
-    try setAt(cur.x, cur.y, try Value.parse(""));
-    try term.updateContent();
+    if (cur.y != 0) {
+        try setAt(cur.x, cur.y - 1, try Value.parse(""));
+        try term.updateContent();
+    }
 }
 
 fn deleteColumn() !void {
@@ -115,20 +116,22 @@ fn deleteColumn() !void {
 }
 
 fn deleteRow() !void {
-    if (copy_cur != null) {
-        if (copy_cur.?.y == cur.y) {
-            copy_cur = null;
-        } else if (copy_cur.?.y > cur.y) {
-            copy_cur.?.y -= 1;
+    if (cur.y == 0) return error.InvalidPosition;
+    if (cur.y > 0) {
+        if (copy_cur != null) {
+            if (copy_cur.?.y == cur.y) {
+                copy_cur = null;
+            } else if (copy_cur.?.y > cur.y) {
+                copy_cur.?.y -= 1;
+            }
         }
+        renderTable.deleteRowAt(cur.y - 1) catch |e| {
+            if (e != error.InvalidPosition) {
+                return e;
+            }
+        };
+        try term.updateContent();
     }
-    renderTable.deleteRowAt(cur.y) catch |e| {
-        if (e != error.InvalidPosition) {
-            return e;
-        }
-    };
-    try term.updateContent();
-    {}
 }
 
 fn setAt(new_x: usize, new_y: usize, v: Value) !void {
@@ -156,6 +159,17 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
     }
     try renderTable.replaceAt(x, y, v);
     try term.updateContent();
+}
+
+fn exitInsertMode() !void {
+    mode_key = 0;
+    if (cur.y == 0) {
+        renderTable.renameColumnAt(cur.x, editor.line()) catch {};
+    } else {
+        const value = try Value.parse(editor.line());
+        try setAt(cur.x, cur.y - 1, value);
+    }
+    try editor.deleteAll();
 }
 
 fn mainloop() !void {
@@ -246,23 +260,22 @@ fn mainloop() !void {
                     else => {},
                 },
                 'i' => switch (in.content) { // mode_key == 'i'
-                    .escape => {
-                        mode_key = 0;
-                        const value = try Value.parse(editor.line());
-                        try setAt(cur.x, cur.y, value);
-                        try editor.deleteAll();
-                    },
+                    .escape => try exitInsertMode(),
                     .codepoint => |cp_u21| {
                         if (cp_u21 < 256) {
                             const cp = @truncate(u8, cp_u21);
                             _ = switch (cp) {
                                 //' ', '0'...'9', 'A'...'Z', 'a'...'z' => try editor.append(cp),
-                                // 10 => // line feed
-                                10 => { // TODO: same code as for .escape
-                                    mode_key = 0;
-                                    const value = try Value.parse(editor.line());
-                                    try setAt(cur.x, cur.y, value);
-                                    try editor.deleteAll();
+
+                                9 => { // Tab
+                                    try exitInsertMode();
+                                    cur.x += 1;
+                                    mode_key = 'i';
+                                },
+                                10 => { // Enter
+                                    try exitInsertMode();
+                                    cur.y += 1;
+                                    mode_key = 'i';
                                 },
                                 32...126 => try editor.insert(cp),
                                 127 => try editor.deleteLeftOfCursor(),
@@ -273,6 +286,7 @@ fn mainloop() !void {
                                 252 => try editor.insertMultiple("ü"),
                                 220 => try editor.insertMultiple("Ü"),
                                 223 => try editor.insertMultiple("ß"),
+                                233 => try editor.insertMultiple("é"),
                                 else => {
                                     std.debug.print("Unknown codepoint {}\n", .{cp});
                                 },
@@ -400,7 +414,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     try term.writeByteNTimes(' ', remaining_columns);
 
     // constants and variables
-    var cur_y_offset: usize = 1;
+    var y_offset: usize = 1;
     var col_total_width: usize = 0;
     const cols = renderTable.columns.items;
     const col1_name = "row#";
@@ -428,13 +442,13 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     }
 
     // print column names
-    try term.moveCursorTo(cur_y_offset, term_col_pos.items[0]);
+    try term.moveCursorTo(y_offset, term_col_pos.items[0]);
     try term.setAttribute(.{ .fg = .red, .bold = true });
     _ = try term.writeAll("row#");
     col_idx = 0;
     while (col_idx < cols.len or col_idx <= cur.x) : (col_idx += 1) {
-        try term.moveCursorTo(cur_y_offset, term_col_pos.items[col_idx + 1]);
-        try term.setAttribute(.{ .fg = .red, .bold = true });
+        try term.moveCursorTo(y_offset, term_col_pos.items[col_idx + 1]);
+        try term.setAttribute(.{ .fg = .red, .bold = true, .reverse = (cur.x == col_idx and cur.y == 0) });
         // non-existing columns
         if (col_idx >= cols.len) {
             try line.resize(0);
@@ -445,16 +459,16 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     }
 
     // print column contents
-    cur_y_offset += 1;
+    y_offset += 1;
     var has_more = cols.len > 0 and cols[0].rows.items.len > 0;
     var row_idx: usize = 0;
     // loop rows
-    while (has_more or row_idx <= cur.y) : (row_idx += 1) {
+    while (has_more or row_idx + 1 <= cur.y) : (row_idx += 1) {
         has_more = false;
 
         // print row number
         try term.setAttribute(.{ .fg = .red, .bold = true });
-        try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[0]);
+        try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[0]);
         try line.resize(0);
         try line.writer().print("{d}", .{row_idx + 1});
         _ = try term.writeLine(term_col_width.items[0], line.items);
@@ -468,8 +482,8 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
                 has_more = true;
             }
 
-            try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[col_idx + 1]);
-            if (mode_key == 'i' and cur.x == col_idx and cur.y == row_idx) {
+            try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[col_idx + 1]);
+            if (mode_key == 'i' and cur.x == col_idx and cur.y == row_idx + 1) {
                 // the text
                 try term.setAttribute(.{ .fg = .yellow, .reverse = true });
                 const col_width = term_col_width.items[col_idx + 1];
@@ -479,13 +493,13 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
                 try term.writeByteNTimes(' ', remaining);
 
                 // the cursor
-                try term.moveCursorTo(cur_y_offset + row_idx, term_col_pos.items[col_idx + 1] + editor.cur.x);
+                try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[col_idx + 1] + editor.cur.x);
                 try term.setAttribute(.{ .fg = .blue, .reverse = true });
                 var key: u8 = ' ';
                 if (editor.cur.x < editor.len()) key = editor.line()[editor.cur.x];
                 try term.writeByte(key);
             } else {
-                try term.setAttribute(.{ .fg = .blue, .reverse = (cur.x == col_idx and cur.y == row_idx) });
+                try term.setAttribute(.{ .fg = .blue, .reverse = (cur.x == col_idx and cur.y == row_idx + 1) });
 
                 if (col_idx < cols.len and row_idx < rows.len) {
                     try line.resize(0);

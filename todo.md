@@ -1,10 +1,19 @@
 priority n-1
 ============
-cursor not displayed when table has 0 columns
-edit title
+keep text when editing a column
+resiliency against crashes
+  save on every edit?
+  any version control? backup saves?
+  save to backup, then move back on successful save?
+  save to backup, then load, then verify, then move to original file
+buggy when saving/loading zero or empty columns
+  can't edit name of empty column
+can't delete last line
+
+priority n-1
+============
+edit column name
 edit cell
-  Tab: edits cell to the right
-  CR : edits cell below
   'a': append
   'i': insert
   'C': replace
@@ -24,6 +33,7 @@ priority n-1
 wrap columns/lines when cursor is outside current window
 insert row
 insert column
+change tables
 
 priority n-1
 ============
@@ -32,3 +42,4 @@ mark ranges
   shift+space: mark column
     but shift+space won't work in terminal
 copy/paste/cut uses temp table instead of position/range
+display multiple tables next to each other
