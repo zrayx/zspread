@@ -17,7 +17,7 @@ var loop: bool = true;
 var renderTable: Table = undefined;
 
 const Settings = struct {
-    const unused_column_width: usize = 13;
+    const unused_column_width: usize = 10;
 };
 
 const Pos = struct {
@@ -167,6 +167,7 @@ fn exitInsertMode() !void {
         renderTable.renameColumnAt(cur.x, editor.line()) catch {};
     } else {
         const value = try Value.parse(editor.line());
+        std.debug.print("exitInsertMode(): cur.y = {d}\n", .{cur.y});
         try setAt(cur.x, cur.y - 1, value);
     }
     try editor.deleteAll();
@@ -441,37 +442,23 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
         try term_col_width.append(col_width);
     }
 
-    // print column names
-    try term.moveCursorTo(y_offset, term_col_pos.items[0]);
-    try term.setAttribute(.{ .fg = .red, .bold = true });
-    _ = try term.writeAll("row#");
-    col_idx = 0;
-    while (col_idx < cols.len or col_idx <= cur.x) : (col_idx += 1) {
-        try term.moveCursorTo(y_offset, term_col_pos.items[col_idx + 1]);
-        try term.setAttribute(.{ .fg = .red, .bold = true, .reverse = (cur.x == col_idx and cur.y == 0) });
-        // non-existing columns
-        if (col_idx >= cols.len) {
-            try line.resize(0);
-            try line.writer().print("new column {d}", .{col_idx + 1 - cols.len});
-        }
-        const name = if (col_idx < cols.len) cols[col_idx].name.items else line.items;
-        _ = try term.writeAll(name);
-    }
-
     // print column contents
-    y_offset += 1;
     var has_more = cols.len > 0 and cols[0].rows.items.len > 0;
     var row_idx: usize = 0;
     // loop rows
-    while (has_more or row_idx + 1 <= cur.y) : (row_idx += 1) {
+    while (has_more or row_idx <= cur.y) : (row_idx += 1) {
         has_more = false;
 
         // print row number
         try term.setAttribute(.{ .fg = .red, .bold = true });
         try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[0]);
         try line.resize(0);
-        try line.writer().print("{d}", .{row_idx + 1});
-        _ = try term.writeLine(term_col_width.items[0], line.items);
+        if (row_idx > 0) {
+            try line.writer().print("{d}", .{row_idx});
+            _ = try term.writeLine(term_col_width.items[0], line.items);
+        } else {
+            _ = try term.writeAll("row#");
+        }
 
         // loop columns
         col_idx = 0;
@@ -483,7 +470,8 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
             }
 
             try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[col_idx + 1]);
-            if (mode_key == 'i' and cur.x == col_idx and cur.y == row_idx + 1) {
+            // display edit text instead of saved cell content
+            if (mode_key == 'i' and cur.x == col_idx and cur.y == row_idx) {
                 // the text
                 try term.setAttribute(.{ .fg = .yellow, .reverse = true });
                 const col_width = term_col_width.items[col_idx + 1];
@@ -499,13 +487,29 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
                 if (editor.cur.x < editor.len()) key = editor.line()[editor.cur.x];
                 try term.writeByte(key);
             } else {
-                try term.setAttribute(.{ .fg = .blue, .reverse = (cur.x == col_idx and cur.y == row_idx + 1) });
+                try term.setAttribute(.{ .fg = if (row_idx == 0) .red else .blue, .reverse = (cur.x == col_idx and cur.y == row_idx) });
 
-                if (col_idx < cols.len and row_idx < rows.len) {
-                    try line.resize(0);
-                    try rows[row_idx].write(line.writer());
-                    var remaining = try term.writeLine(term_col_width.items[col_idx + 1], line.items);
-                    if (col_idx + 1 < cols.len) remaining += 1;
+                if ((col_idx < cols.len or col_idx <= cur.x) and row_idx < rows.len + 1) {
+                    // if row_idx == 0, then write the column name, else the column content
+                    const cell_text = blk: {
+                        if (row_idx == 0) {
+                            if (col_idx >= cols.len) {
+                                try line.resize(0);
+                                try line.writer().print("new col {d}", .{col_idx + 1 - cols.len});
+                                break :blk line.items;
+                            } else {
+                                break :blk cols[col_idx].name.items;
+                            }
+                        } else { // column content
+                            try line.resize(0);
+                            if (col_idx < cols.len) {
+                                try rows[row_idx - 1].write(line.writer());
+                            }
+                            break :blk line.items;
+                        }
+                    };
+                    var remaining = try term.writeLine(term_col_width.items[col_idx + 1], cell_text);
+                    remaining += 1; // add one space after column
                     try term.writeByteNTimes(' ', remaining);
                 } else {
                     const remaining = term_col_width.items[col_idx + 1];
