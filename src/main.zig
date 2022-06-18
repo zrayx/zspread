@@ -32,8 +32,8 @@ var editor: Editor = undefined;
 var mode_key: u8 = 0;
 
 pub fn main() !void {
-    renderTable = Table.fromCSV("io") catch
-        Table.init("io") catch {
+    renderTable = Table.fromCSV("todo") catch
+        Table.init("todo") catch {
         @panic("");
     };
     defer renderTable.deinit();
@@ -514,7 +514,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
         while (col_idx < cols.len or col_idx <= cur.x) : (col_idx += 1) {
             const rows = if (col_idx < cols.len) cols[col_idx].rows.items else undefined;
             // check for every column - if any column has data, continue loop
-            if (col_idx < cols.len and row_idx + 1 < rows.len) {
+            if (col_idx < cols.len and row_idx < rows.len) {
                 has_more = true;
             }
 

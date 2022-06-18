@@ -5,11 +5,16 @@ editor:
     'h': backspace
     'b': cursor_left
     'f': cursor_right
-  render cursor
+    'a': start of line
+    'e': end of line
+    'u': delete everything left of the cursor
   move with cursor keys
   move with VI movement keys
 handle utf8
     https://zig.news/dude_the_builder/unicode-basics-in-zig-dj3
+load & save different tables
+  interface for asking for table name
+    or from command line
 
 priority n-1
 ============
@@ -17,6 +22,7 @@ wrap columns/lines when cursor is outside current window
 insert row
 insert column
 change tables
+message line to display errors
 
 priority n-1
 ============
