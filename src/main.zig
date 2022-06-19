@@ -27,9 +27,16 @@ const Pos = struct {
 };
 var cur = Pos{ .x = 0, .y = 1 };
 var copy_cur: ?Pos = null;
+var copy_mode: CopyMode = .Cell;
 var edit_line = std.ArrayList(u8).init(croc);
 var editor: Editor = undefined;
 var mode_key: u8 = 0;
+
+const CopyMode = enum {
+    Cell,
+    Line,
+    Column,
+};
 
 pub fn main() !void {
     renderTable = Table.fromCSV("todo") catch
@@ -77,19 +84,22 @@ fn moveCursor(dx: i32, dy: i32) !void {
     try term.updateContent();
 }
 
-fn copy() !void {
+fn copy(mode: CopyMode) !void {
     copy_cur = cur;
+    copy_mode = mode;
 }
 
 fn paste() !void {
     if (copy_cur != null) {
         var value: Value = undefined;
-        if (renderTable.getAt(copy_cur.?.x, copy_cur.?.y)) |v| {
-            value = try v.clone();
-        } else |_| {
-            value = Value.empty;
+        if (copy_cur.?.y > 0) {
+            if (renderTable.getAt(copy_cur.?.x, copy_cur.?.y - 1)) |v| {
+                value = try v.clone();
+            } else |_| {
+                value = Value.empty;
+            }
+            try setAt(cur.x, cur.y - 1, value);
         }
-        try setAt(cur.x, cur.y - 1, value);
     }
 }
 
@@ -259,7 +269,7 @@ fn mainloop() !void {
                         };
                         if (in.mod_ctrl) {
                             _ = switch (cp) {
-                                'c' => try copy(),
+                                'c' => try copy(.Cell),
                                 'h' => try moveCursor(-huge_step, 0),
                                 'j' => try moveCursor(0, huge_step), // note: ctrl-j is translated by the linux terminal to \r, so won't work as expected
                                 'k' => try moveCursor(0, -huge_step),
@@ -300,7 +310,10 @@ fn mainloop() !void {
                             mode_key = 0;
                             try deleteRow();
                         },
-                        else => {},
+                        else => {
+                            mode_key = 0;
+                            ErrorMessage("illegal delete command");
+                        },
                     },
                     else => {},
                 },
@@ -573,6 +586,11 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
 fn handleSigWinch(_: c_int) callconv(.C) void {
     term.fetchSize() catch {};
     term.updateContent() catch {};
+}
+
+/// TODO: render message in status line
+fn ErrorMessage(msg: []const u8) void {
+    _ = msg; // empty for now
 }
 
 /// Custom panic handler, so that we can try to cook the terminal on a crash,
