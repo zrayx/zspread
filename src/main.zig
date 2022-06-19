@@ -67,7 +67,6 @@ pub fn main() !void {
     };
     defer renderTable.deinit();
     max_cells = countCells();
-    dbg("cells 1: {d}\n", .{max_cells});
     if (max_cells < 10) {
         return;
     }
