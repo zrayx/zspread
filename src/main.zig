@@ -57,8 +57,8 @@ pub fn main() !void {
     var title = std.ArrayList(u8).init(croc);
     defer title.deinit();
     try title.writer().print("db/{s}.csv - zspread", .{renderTable.name.items});
-    try term.setWindowTitle(title.items);
-    defer term.setWindowTitle("bash") catch {};
+    try term.setWindowTitle("{s}", .{title.items});
+    defer term.setWindowTitle("bash", .{}) catch {};
     try term.updateContent();
 
     try mainloop();
