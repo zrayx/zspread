@@ -137,6 +137,55 @@ fn delete() !void {
     }
 }
 
+/// add new columns until we have new_x+1 columns, so that col(new_x) becomes accessible
+fn expandColumns(new_x: usize) !void {
+    var line = std.ArrayList(u8).init(croc);
+    defer line.deinit();
+    var x = new_x;
+
+    while (renderTable.columns.items.len < x + 1) {
+        var giveup_count = renderTable.columns.items.len + 1;
+        var adder: usize = 0;
+        while (adder < giveup_count) : (adder += 1) {
+            try line.resize(0);
+            try line.writer().print("column {d}", .{renderTable.columns.items.len + 1 + adder});
+            renderTable.addColumn(line.items) catch |e| {
+                if (e == error.ColumnExists) continue;
+            };
+            break;
+        }
+    }
+}
+
+fn insertColumn(insert_x: usize) !void {
+    // the position of the content to be copied changes
+    if (copy_cur != null and copy_cur.?.x > insert_x) {
+        copy_cur.?.x += 1;
+    }
+
+    // Add one column and then swap it for the desired position
+    const old_len = renderTable.columns.items.len;
+    if (insert_x <= old_len) {
+        try expandColumns(old_len);
+        try renderTable.swapColumnsAt(insert_x, old_len);
+    } else {
+        try expandColumns(insert_x);
+    }
+    try term.updateContent();
+}
+
+fn insertRow(col_y: usize) !void {
+    if (copy_cur != null and copy_cur.?.y > cur.y) {
+        copy_cur.?.y += 1;
+    }
+    renderTable.insertRowAt(col_y) catch |e| {
+        if (e != error.InvalidPosition) {
+            return e;
+        }
+    };
+    try term.updateContent();
+}
+
 fn deleteColumn() !void {
     if (copy_cur != null) {
         if (copy_cur.?.x == cur.x) {
@@ -169,25 +218,6 @@ fn deleteRow() !void {
             }
         };
         try term.updateContent();
-    }
-}
-
-fn expandColumns(new_x: usize) !void {
-    var line = std.ArrayList(u8).init(croc);
-    defer line.deinit();
-    var x = new_x;
-
-    while (renderTable.columns.items.len < x + 1) {
-        var giveup_count = renderTable.columns.items.len + 1;
-        var adder: usize = 0;
-        while (adder < giveup_count) : (adder += 1) {
-            try line.resize(0);
-            try line.writer().print("column {d}", .{renderTable.columns.items.len + 1 + adder});
-            renderTable.addColumn(line.items) catch |e| {
-                if (e == error.ColumnExists) continue;
-            };
-            break;
-        }
     }
 }
 
@@ -278,38 +308,6 @@ fn mainloop() !void {
                 0 => switch (in.content) { // mode_key == 0
                     .escape => break :loop,
                     .codepoint => |cp| {
-                        _ = switch (mode_key) {
-                            0 => {
-                                _ = switch (cp) {
-                                    'I' => { // insert
-                                        mode_key = 'I';
-                                        break;
-                                    },
-                                    'Y' => { // yank
-                                        mode_key = 'Y';
-                                        break;
-                                    },
-                                    'P' => { // paste
-                                        mode_key = 'P';
-                                        break;
-                                    },
-                                    'D' => { // delete
-                                        mode_key = 'D';
-                                        break;
-                                    },
-                                    'd' => { // delete (vi-like)
-                                        mode_key = 'd';
-                                        break;
-                                    },
-                                    'C', 'a', 'i' => { // replace/append/insert: enter edit mode for cell
-                                        try enterInsertMode(@truncate(u8, cp));
-                                        break;
-                                    },
-                                    else => {},
-                                };
-                            },
-                            else => {},
-                        };
                         if (in.mod_ctrl) {
                             _ = switch (cp) {
                                 'c' => try copy(.Cell),
@@ -322,6 +320,19 @@ fn mainloop() !void {
                             };
                         } else {
                             _ = switch (cp) {
+                                // edit mode
+                                'C', 'a', 'i' => try enterInsertMode(@truncate(u8, cp)), // replace/append/insert: enter edit mode for cell
+                                // insert/delete/copy/paste
+                                'D' => mode_key = 'D', // delete
+                                'I' => mode_key = 'I', // insert
+                                'P' => mode_key = 'P', // paste
+                                'Y' => mode_key = 'Y', // yank
+                                'd' => mode_key = 'd', // delete (vi-like)
+                                'o' => try insertRow(if (cur.y > 0) cur.y - 1 else 0),
+                                'O' => try insertRow(cur.y),
+                                '+' => try insertColumn(cur.x),
+                                'x' => try delete(),
+                                // movement
                                 'H' => try moveCursor(-large_step, 0),
                                 'J' => try moveCursor(0, large_step),
                                 'K' => try moveCursor(0, -large_step),
@@ -330,8 +341,8 @@ fn mainloop() !void {
                                 'j' => try moveCursor(0, 1),
                                 'k' => try moveCursor(0, -1),
                                 'l' => try moveCursor(1, 0),
+                                // quit
                                 'q' => break :loop,
-                                'x', 'D' => try delete(),
                                 else => {},
                             };
                         }
@@ -607,12 +618,12 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
 
                 // the cursor
                 try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[col_idx + 1] + editor.cur.x);
-                try term.setAttribute(.{ .fg = .blue, .reverse = true });
+                try term.setAttribute(.{ .fg = .bright_blue, .reverse = true });
                 var key: u8 = ' ';
                 if (editor.cur.x < editor.len()) key = editor.line()[editor.cur.x];
                 try term.writeByte(key);
             } else {
-                try term.setAttribute(.{ .fg = if (row_idx == 0) .red else .blue, .reverse = (cur.x == col_idx and cur.y == row_idx) });
+                try term.setAttribute(.{ .fg = if (row_idx == 0) .red else .white, .reverse = (cur.x == col_idx and cur.y == row_idx) });
 
                 if ((col_idx < cols.len or col_idx <= cur.x) and row_idx < rows.len + 1) {
                     // if row_idx == 0, then write the column name, else the column content

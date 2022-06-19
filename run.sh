@@ -5,8 +5,8 @@ clear
 #head -$((LINES-4)) out | cut -b-$COLUMNS
 #rm out
 
-ps -u willem -eo comm | grep -wq zspread && {
-    kill `ps -u willem -eo comm,pid | awk '/zspread/ { print $2 }'`
+ps -u $USER -eo comm | grep -wq zspread && {
+    kill `ps -u $USER -eo comm,pid | awk '/zspread/ { print $2 }'`
 }
 
 #(cd lib/zdb/ && zig build test; echo -----------------------------------------)
