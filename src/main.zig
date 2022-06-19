@@ -38,12 +38,39 @@ const CopyMode = enum {
     Column,
 };
 
+// heuristically determine if the user entered data
+// if yes, the table should not be saved if almost empty
+var max_cells: usize = 0;
+fn countCells() usize {
+    var sum: usize = 0;
+    const cols = renderTable.columns.items;
+    for (cols) |col| {
+        sum += col.rows.items.len;
+    }
+    return sum;
+}
+
+fn saveTable() !void {
+    const cnt = countCells();
+    if (max_cells < cnt) max_cells = cnt;
+    if (max_cells > 10 and cnt < 10) {
+        dbg("We had {d} cells and now only {d}, so not saving table.\n", .{ max_cells, cnt });
+    } else {
+        try renderTable.save();
+    }
+}
+
 pub fn main() !void {
     renderTable = Table.fromCSV("todo") catch
         Table.init("todo") catch {
         @panic("");
     };
     defer renderTable.deinit();
+    max_cells = countCells();
+    dbg("cells 1: {d}\n", .{max_cells});
+    if (max_cells < 10) {
+        return;
+    }
 
     try term.init(render);
     defer term.deinit();
@@ -69,7 +96,7 @@ pub fn main() !void {
     try term.updateContent();
 
     try mainloop();
-    try renderTable.save();
+    try saveTable();
 }
 
 fn max(a: usize, b: usize) usize {
@@ -99,6 +126,7 @@ fn paste() !void {
                 value = Value.empty;
             }
             try setAt(cur.x, cur.y - 1, value);
+            try saveTable();
         }
     }
 }
@@ -224,7 +252,7 @@ fn exitInsertMode() !void {
         try setAt(cur.x, cur.y - 1, value);
     }
     try editor.deleteAll();
-    try renderTable.save(); // TODO: xxx
+    try saveTable(); // TODO: xxx
 }
 
 fn mainloop() !void {
@@ -254,11 +282,27 @@ fn mainloop() !void {
                         _ = switch (mode_key) {
                             0 => {
                                 _ = switch (cp) {
-                                    'd' => {
+                                    'I' => { // insert
+                                        mode_key = 'I';
+                                        break;
+                                    },
+                                    'Y' => { // yank
+                                        mode_key = 'Y';
+                                        break;
+                                    },
+                                    'P' => { // paste
+                                        mode_key = 'P';
+                                        break;
+                                    },
+                                    'D' => { // delete
+                                        mode_key = 'D';
+                                        break;
+                                    },
+                                    'd' => { // delete (vi-like)
                                         mode_key = 'd';
                                         break;
                                     },
-                                    'C', 'a', 'i' => {
+                                    'C', 'a', 'i' => { // replace/append/insert: enter edit mode for cell
                                         try enterInsertMode(@truncate(u8, cp));
                                         break;
                                     },
@@ -307,6 +351,24 @@ fn mainloop() !void {
                             try deleteColumn();
                         },
                         'd' => {
+                            mode_key = 0;
+                            try deleteRow();
+                        },
+                        else => {
+                            mode_key = 0;
+                            ErrorMessage("illegal delete command");
+                        },
+                    },
+                    else => {},
+                },
+                'D' => switch (in.content) { // mode_key == 'D'
+                    .escape => mode_key = 0,
+                    .codepoint => |cp| switch (cp) {
+                        'c' => {
+                            mode_key = 0;
+                            try deleteColumn();
+                        },
+                        'l' => {
                             mode_key = 0;
                             try deleteRow();
                         },
@@ -468,8 +530,10 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     try line.resize(0);
     const mode_name: []const u8 = switch (mode_key) {
         0 => "normal",
-        'd' => "delete",
+        'd', 'D' => "delete",
         'i', 'a' => "insert",
+        'y', 'Y' => "copy",
+        'p', 'P' => "paste",
         else => @panic("Unknown mode"),
     };
     try line.writer().print("Table: {s} - {s}", .{ renderTable.name.items, mode_name });

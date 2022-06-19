@@ -5,7 +5,7 @@ ps -u willem -eo comm | grep -wq zspread && {
 }
 
 
-[[ -e run_me ]] && zig build run &
+[[ -e run_me ]] && zig build run 2>zspread.log &
 
 inotifywait --format %w -q -e close_write run_me
 
