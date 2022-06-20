@@ -648,17 +648,13 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
 
     // calculate offset
     if (cur.x + offset.x > term.width) offset.x = cur.x - term.width;
-    if (Settings.top_rows + 1 + cur.y + offset.y > term.height) offset.y = Settings.top_rows + 1 + cur.y - term.height;
-    dbg("offset: {any}\n", .{offset});
+    offset.y = if (Settings.top_rows + 1 + cur.y > term.height) Settings.top_rows + 1 + cur.y - term.height else 0;
 
     // print column contents
     const num_rows = getMaxRowCount();
-    var has_more = cols.len > 0 and cols[0].rows.items.len > 0;
     var row_idx: usize = offset.y;
     // loop rows
-    while (row_idx - offset.y < term.height - Settings.top_rows and (row_idx < num_rows or row_idx <= cur.y)) : (row_idx += 1) {
-        has_more = false;
-
+    while (row_idx - offset.y <= term.height - Settings.top_rows and (row_idx < num_rows + 1 or row_idx <= cur.y)) : (row_idx += 1) {
         // print row number
         try term.setAttribute(.{ .fg = .red, .bold = true });
         try term.moveCursorTo(row_idx - offset.y + Settings.top_rows - 1, term_col_pos.items[0]);
@@ -674,12 +670,8 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
         col_idx = 0;
         while (col_idx < cols.len or col_idx <= cur.x) : (col_idx += 1) {
             const rows = if (col_idx < cols.len) cols[col_idx].rows.items else undefined;
-            // check for every column - if any column has data, continue loop
-            if (col_idx < cols.len and row_idx < rows.len) {
-                has_more = true;
-            }
 
-            try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[col_idx + 1]);
+            try term.moveCursorTo(row_idx - offset.y + Settings.top_rows - 1, term_col_pos.items[col_idx + 1]);
             // display edit text instead of saved cell content
             if (mode_key == 'i' and cur.x == col_idx and cur.y == row_idx) {
                 // the text
@@ -691,18 +683,19 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
                 try term.writeByteNTimes(' ', remaining);
 
                 // the cursor
-                try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[col_idx + 1] + editor.cur.x);
+                try term.moveCursorTo(y_offset + row_idx - offset.y, term_col_pos.items[col_idx + 1] + editor.cur.x);
                 try term.setAttribute(.{ .fg = .bright_blue, .reverse = true });
                 var key: u8 = ' ';
                 if (editor.cur.x < editor.len()) key = editor.line()[editor.cur.x];
                 try term.writeByte(key);
             } else {
-                try term.setAttribute(.{ .fg = if (row_idx == 0) .red else .white, .reverse = (cur.x == col_idx and cur.y == row_idx) });
+                try term.setAttribute(.{ .fg = if (row_idx - offset.y == 0) .red else .white, .reverse = (cur.x == col_idx and cur.y == row_idx) });
 
+                dbg("row_idx: {d}, rows.len: {d}, cur.y: {d}, offset.y: {d}\n", .{ row_idx, rows.len, cur.y, offset.y });
                 if ((col_idx < cols.len or col_idx <= cur.x) and row_idx < rows.len + 1) {
                     // if row_idx == 0, then write the column name, else the column content
                     const cell_text = blk: {
-                        if (row_idx == 0) {
+                        if (row_idx - offset.y == 0) {
                             if (col_idx >= cols.len) {
                                 try line.resize(0);
                                 try line.writer().print("new col {d}", .{col_idx + 1 - cols.len});
