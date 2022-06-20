@@ -19,6 +19,7 @@ var renderTable: Table = undefined;
 
 const Settings = struct {
     const unused_column_width: usize = 10;
+    const top_rows: usize = 2;
 };
 
 const Pos = struct {
@@ -26,6 +27,7 @@ const Pos = struct {
     y: usize,
 };
 var cur = Pos{ .x = 0, .y = 1 };
+var offset = Pos{ .x = 0, .y = 0 };
 var copy_cur: ?Pos = null;
 var copy_mode: CopyMode = .Cell;
 var edit_line = std.ArrayList(u8).init(croc);
@@ -232,7 +234,7 @@ fn deleteRow() !void {
                 return e;
             }
         };
-        if (cur.y > 0 and getMaxRow() + 1 == cur.y) {
+        if (cur.y > 0 and getMaxRowCount() + 1 == cur.y) {
             cur.y -= 1;
         }
         try saveTable();
@@ -240,7 +242,7 @@ fn deleteRow() !void {
     }
 }
 
-fn getMaxRow() usize {
+fn getMaxRowCount() usize {
     var max_rows: usize = 0;
     for (renderTable.columns.items) |col| {
         if (max_rows < col.rows.items.len) {
@@ -256,7 +258,15 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
 
     try expandColumns(new_x);
 
-    while (renderTable.columns.items[x].rows.items.len < y + 1) {
+    var col = &renderTable.columns.items[x];
+    _ = switch (v) {
+        .empty => if (y >= col.rows.items.len) {
+            return;
+        },
+        else => {},
+    };
+
+    while (col.rows.items.len < y + 1) {
         try renderTable.appendAt(x, Value.empty);
     }
     try renderTable.replaceAt(x, y, v);
@@ -421,8 +431,13 @@ fn mainloop() !void {
                             const cp = @truncate(u8, cp_u21);
                             if (in.mod_ctrl) {
                                 _ = switch (cp) {
+                                    'a' => editor.home(),
+                                    'e' => editor.end(),
+                                    'f' => editor.right(),
+                                    'b' => editor.left(),
                                     'h' => try editor.deleteLeftOfCursor(),
                                     'u' => try editor.deleteAllLeftOfCursor(),
+                                    'w' => try editor.deleteWordLeftOfCursor(),
                                     else => dbg("unused insert mode key combination C-{c} ({d})\n", .{ cp, cp }),
                                 };
                             } else {
@@ -519,6 +534,19 @@ pub const Editor = struct {
         self.cur.x = self.len();
     }
 
+    pub fn deleteWordLeftOfCursor(self: *Self) !void {
+        // delete non-spaces
+        while (self.cur.x > 0 and self.content.items[self.cur.x - 1] != ' ') {
+            self.cur.x -= 1;
+            try self.deleteRightOfCursor();
+        }
+        // delete spaces
+        while (self.cur.x > 0 and self.content.items[self.cur.x - 1] == ' ') {
+            self.cur.x -= 1;
+            try self.deleteRightOfCursor();
+        }
+    }
+
     pub fn deleteAllLeftOfCursor(self: *Self) !void {
         while (self.cur.x > 0) {
             self.cur.x -= 1;
@@ -571,6 +599,7 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     defer line.deinit();
 
     try term.clear();
+    try term.fetchSize(); // term.height and term.width will contain the size
 
     try term.moveCursorTo(0, 0);
     try term.setAttribute(.{ .fg = .green, .reverse = true });
@@ -617,18 +646,24 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
         try term_col_width.append(col_width);
     }
 
+    // calculate offset
+    if (cur.x + offset.x > term.width) offset.x = cur.x - term.width;
+    if (Settings.top_rows + 1 + cur.y + offset.y > term.height) offset.y = Settings.top_rows + 1 + cur.y - term.height;
+    dbg("offset: {any}\n", .{offset});
+
     // print column contents
+    const num_rows = getMaxRowCount();
     var has_more = cols.len > 0 and cols[0].rows.items.len > 0;
-    var row_idx: usize = 0;
+    var row_idx: usize = offset.y;
     // loop rows
-    while (has_more or row_idx <= cur.y) : (row_idx += 1) {
+    while (row_idx - offset.y < term.height - Settings.top_rows and (row_idx < num_rows or row_idx <= cur.y)) : (row_idx += 1) {
         has_more = false;
 
         // print row number
         try term.setAttribute(.{ .fg = .red, .bold = true });
-        try term.moveCursorTo(y_offset + row_idx, term_col_pos.items[0]);
+        try term.moveCursorTo(row_idx - offset.y + Settings.top_rows - 1, term_col_pos.items[0]);
         try line.resize(0);
-        if (row_idx > 0) {
+        if (row_idx > offset.y) {
             try line.writer().print("{d}", .{row_idx});
             _ = try term.writeLine(term_col_width.items[0], line.items);
         } else {
