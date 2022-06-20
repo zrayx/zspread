@@ -419,33 +419,39 @@ fn mainloop() !void {
                     .codepoint => |cp_u21| {
                         if (cp_u21 < 256) {
                             const cp = @truncate(u8, cp_u21);
-                            _ = switch (cp) {
-                                //' ', '0'...'9', 'A'...'Z', 'a'...'z' => try editor.append(cp),
+                            if (in.mod_ctrl) {
+                                _ = switch (cp) {
+                                    'h' => try editor.deleteLeftOfCursor(),
+                                    'u' => try editor.deleteAllLeftOfCursor(),
+                                    else => dbg("unused insert mode key combination C-{c} ({d})\n", .{ cp, cp }),
+                                };
+                            } else {
+                                _ = switch (cp) {
+                                    //' ', '0'...'9', 'A'...'Z', 'a'...'z' => try editor.append(cp),
 
-                                9 => { // Tab
-                                    try exitInsertMode();
-                                    cur.x += 1;
-                                    try enterInsertMode('a');
-                                },
-                                10 => { // Enter
-                                    try exitInsertMode();
-                                    cur.y += 1;
-                                    try enterInsertMode('a');
-                                },
-                                32...126 => try editor.insert(cp),
-                                127 => try editor.deleteLeftOfCursor(),
-                                228 => try editor.insertMultiple("ä"),
-                                196 => try editor.insertMultiple("Ä"),
-                                246 => try editor.insertMultiple("ö"),
-                                214 => try editor.insertMultiple("Ö"),
-                                252 => try editor.insertMultiple("ü"),
-                                220 => try editor.insertMultiple("Ü"),
-                                223 => try editor.insertMultiple("ß"),
-                                233 => try editor.insertMultiple("é"),
-                                else => {
-                                    dbg("Unknown codepoint {}\n", .{cp});
-                                },
-                            };
+                                    9 => { // Tab
+                                        try exitInsertMode();
+                                        cur.x += 1;
+                                        try enterInsertMode('a');
+                                    },
+                                    10 => { // Enter
+                                        try exitInsertMode();
+                                        cur.y += 1;
+                                        try enterInsertMode('a');
+                                    },
+                                    32...126 => try editor.insert(cp),
+                                    127 => try editor.deleteLeftOfCursor(),
+                                    228 => try editor.insertMultiple("ä"),
+                                    196 => try editor.insertMultiple("Ä"),
+                                    246 => try editor.insertMultiple("ö"),
+                                    214 => try editor.insertMultiple("Ö"),
+                                    252 => try editor.insertMultiple("ü"),
+                                    220 => try editor.insertMultiple("Ü"),
+                                    223 => try editor.insertMultiple("ß"),
+                                    233 => try editor.insertMultiple("é"),
+                                    else => dbg("unused insert mode key {d}\n", .{cp}),
+                                };
+                            }
                         } else {
                             dbg("Codepoint value {d} must be < 256", .{cp_u21});
                             @panic("x");
@@ -513,6 +519,13 @@ pub const Editor = struct {
         self.cur.x = self.len();
     }
 
+    pub fn deleteAllLeftOfCursor(self: *Self) !void {
+        while (self.cur.x > 0) {
+            self.cur.x -= 1;
+            try self.deleteRightOfCursor();
+        }
+    }
+
     pub fn deleteLeftOfCursor(self: *Self) !void {
         if (self.cur.x > 0) {
             self.cur.x -= 1;
@@ -567,7 +580,6 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
         0 => "normal",
         'd', 'D' => "delete",
         'i', 'a' => "insert",
-        'I' => "insert line/column",
         'y', 'Y' => "copy",
         'p', 'P' => "paste",
         'g' => "go to",
