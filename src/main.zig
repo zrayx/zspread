@@ -157,6 +157,18 @@ fn expandColumns(new_x: usize) !void {
     }
 }
 
+fn generateColumnName(from_x: usize) !std.ArrayList(u8) {
+    var line = std.ArrayList(u8).init(croc);
+    var n = from_x;
+    while (true) : (n += 1) {
+        try line.resize(0);
+        try line.writer().print("column {d}", .{n});
+        if (!renderTable.hasColumn(line.items)) {
+            return line;
+        }
+    }
+}
+
 fn insertColumn(insert_x: usize) !void {
     // the position of the content to be copied changes
     if (copy_cur != null and copy_cur.?.x > insert_x) {
@@ -166,8 +178,9 @@ fn insertColumn(insert_x: usize) !void {
     // Add one column and then swap it for the desired position
     const old_len = renderTable.columns.items.len;
     if (insert_x <= old_len) {
-        try expandColumns(old_len);
-        try renderTable.swapColumnsAt(insert_x, old_len);
+        var new_name = try generateColumnName(insert_x + 1);
+        defer new_name.deinit();
+        try renderTable.insertColumnAt(insert_x, new_name.items);
     } else {
         try expandColumns(insert_x);
     }
@@ -183,6 +196,7 @@ fn insertRow(col_y: usize) !void {
             return e;
         }
     };
+    cur.y = col_y + 1;
     try term.updateContent();
 }
 
@@ -199,6 +213,7 @@ fn deleteColumn() !void {
             return e;
         }
     };
+    try saveTable();
     try term.updateContent();
 }
 
@@ -217,13 +232,25 @@ fn deleteRow() !void {
                 return e;
             }
         };
+        if (cur.y > 0 and getMaxRow() + 1 == cur.y) {
+            cur.y -= 1;
+        }
+        try saveTable();
         try term.updateContent();
     }
 }
 
+fn getMaxRow() usize {
+    var max_rows: usize = 0;
+    for (renderTable.columns.items) |col| {
+        if (max_rows < col.rows.items.len) {
+            max_rows = col.rows.items.len;
+        }
+    }
+    return max_rows;
+}
+
 fn setAt(new_x: usize, new_y: usize, v: Value) !void {
-    var line = std.ArrayList(u8).init(croc);
-    defer line.deinit();
     var x = new_x;
     var y = new_y;
 
@@ -304,9 +331,19 @@ fn mainloop() !void {
         const read = try term.readInput(&buf);
         var it = spoon.inputParser(buf[0..read]);
         while (it.next()) |in| {
+            // ESC should exit any mode
+            if (mode_key != 0 and mode_key != 'i') {
+                _ = switch (in.content) {
+                    .escape => {
+                        mode_key = 0;
+                        continue;
+                    },
+                    else => {},
+                };
+            }
             _ = switch (mode_key) {
                 0 => switch (in.content) { // mode_key == 0
-                    .escape => break :loop,
+                    .escape => {}, // do nothing to avoid mode confusion
                     .codepoint => |cp| {
                         if (in.mod_ctrl) {
                             _ = switch (cp) {
@@ -324,12 +361,12 @@ fn mainloop() !void {
                                 'C', 'a', 'i' => try enterInsertMode(@truncate(u8, cp)), // replace/append/insert: enter edit mode for cell
                                 // insert/delete/copy/paste
                                 'D' => mode_key = 'D', // delete
-                                'I' => mode_key = 'I', // insert
                                 'P' => mode_key = 'P', // paste
                                 'Y' => mode_key = 'Y', // yank
                                 'd' => mode_key = 'd', // delete (vi-like)
-                                'o' => try insertRow(if (cur.y > 0) cur.y - 1 else 0),
-                                'O' => try insertRow(cur.y),
+                                'I' => try insertColumn(cur.x),
+                                'O' => try insertRow(if (cur.y > 0) cur.y - 1 else 0),
+                                'o' => try insertRow(cur.y),
                                 '+' => try insertColumn(cur.x),
                                 'x' => try delete(),
                                 // movement
@@ -353,41 +390,29 @@ fn mainloop() !void {
                     .arrow_down => try moveCursor(0, 1),
                     else => {},
                 },
-                'd' => switch (in.content) { // mode_key == 'd'
-                    .escape => mode_key = 0,
-                    .codepoint => |cp| switch (cp) {
-                        'c' => {
-                            mode_key = 0;
-                            try deleteColumn();
+                'd' => { // mode_key == 'd'
+                    _ = switch (in.content) {
+                        .escape => mode_key = 0,
+                        .codepoint => |cp| switch (cp) {
+                            'c' => try deleteColumn(),
+                            'd' => try deleteRow(),
+                            else => ErrorMessage("illegal delete command"),
                         },
-                        'd' => {
-                            mode_key = 0;
-                            try deleteRow();
-                        },
-                        else => {
-                            mode_key = 0;
-                            ErrorMessage("illegal delete command");
-                        },
-                    },
-                    else => {},
+                        else => {},
+                    };
+                    mode_key = 0;
                 },
-                'D' => switch (in.content) { // mode_key == 'D'
-                    .escape => mode_key = 0,
-                    .codepoint => |cp| switch (cp) {
-                        'c' => {
-                            mode_key = 0;
-                            try deleteColumn();
+                'D' => { // mode_key == 'D'
+                    _ = switch (in.content) {
+                        .escape => mode_key = 0,
+                        .codepoint => |cp| switch (cp) {
+                            'c' => try deleteColumn(),
+                            'l' => try deleteRow(),
+                            else => ErrorMessage("illegal delete command"),
                         },
-                        'l' => {
-                            mode_key = 0;
-                            try deleteRow();
-                        },
-                        else => {
-                            mode_key = 0;
-                            ErrorMessage("illegal delete command");
-                        },
-                    },
-                    else => {},
+                        else => {},
+                    };
+                    mode_key = 0;
                 },
                 'i' => switch (in.content) { // mode_key == 'i'
                     .escape => try exitInsertMode(),
@@ -542,8 +567,10 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
         0 => "normal",
         'd', 'D' => "delete",
         'i', 'a' => "insert",
+        'I' => "insert line/column",
         'y', 'Y' => "copy",
         'p', 'P' => "paste",
+        'g' => "go to",
         else => @panic("Unknown mode"),
     };
     try line.writer().print("Table: {s} - {s}", .{ renderTable.name.items, mode_name });
