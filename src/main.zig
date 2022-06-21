@@ -19,14 +19,15 @@ var renderTable: Table = undefined;
 
 const Settings = struct {
     const unused_column_width: usize = 10;
-    const top_rows: usize = 2;
+    const top_rows: usize = 1; // headers
+    const bottom_rows: usize = 1; // status line + edit
 };
 
 const Pos = struct {
     x: usize,
     y: usize,
 };
-var cur = Pos{ .x = 4, .y = 1 };
+var cur = Pos{ .x = 0, .y = 1 };
 var offset = Pos{ .x = 0, .y = 0 };
 var copy_cur: ?Pos = null;
 var copy_mode: CopyMode = .Cell;
@@ -68,6 +69,7 @@ pub fn main() !void {
         @panic("");
     };
     defer renderTable.deinit();
+
     max_cells = countCells();
     if (max_cells < 10) {
         return;
@@ -115,6 +117,13 @@ fn moveCursor(dx: i32, dy: i32) !void {
 fn copy(mode: CopyMode) !void {
     copy_cur = cur;
     copy_mode = mode;
+}
+
+fn insertToday() !void {
+    const v = Value.today();
+    dbg("today: {any}\n", .{v});
+    try setAt(cur.x, cur.y - 1, v);
+    try saveTable();
 }
 
 fn paste() !void {
@@ -276,49 +285,81 @@ fn setAt(new_x: usize, new_y: usize, v: Value) !void {
 fn enterInsertMode(mode: u8) !void {
     mode_key = mode;
     try editor.deleteAll();
-    if (cur.x >= renderTable.columns.items.len) {
-        try expandColumns(cur.x);
-    }
-    if (mode_key == 'i' or mode_key == 'a') {
-        if (cur.y > 0) {
-            var line = std.ArrayList(u8).init(croc);
-            defer line.deinit();
-            const cols = renderTable.columns.items;
-            if (cur.x < cols.len) {
-                const rows = cols[cur.x].rows.items;
-                if (cur.y - 1 < rows.len) {
-                    const value = rows[cur.y - 1];
-                    try value.write(line.writer());
-                    try editor.set(line.items);
-                }
-            }
-        } else {
-            if (cur.x >= renderTable.columns.items.len) {
-                try expandColumns(cur.x);
-            }
-            try editor.set(renderTable.columns.items[cur.x].name.items);
-        }
-        if (mode_key == 'a') {
-            editor.end();
-            mode_key = 'i';
-        }
-    } else if (mode_key == 'C') {
-        mode_key = 'i';
+    if (mode_key == ':') {
+        // status line
+        // no action currently
     } else {
-        @panic("Unkown mode key");
+        if (cur.x >= renderTable.columns.items.len) {
+            try expandColumns(cur.x);
+        }
+        if (mode_key == 'i' or mode_key == 'a') {
+            if (cur.y > 0) {
+                var line = std.ArrayList(u8).init(croc);
+                defer line.deinit();
+                const cols = renderTable.columns.items;
+                if (cur.x < cols.len) {
+                    const rows = cols[cur.x].rows.items;
+                    if (cur.y - 1 < rows.len) {
+                        const value = rows[cur.y - 1];
+                        try value.write(line.writer());
+                        try editor.set(line.items);
+                    }
+                }
+            } else {
+                if (cur.x >= renderTable.columns.items.len) {
+                    try expandColumns(cur.x);
+                }
+                try editor.set(renderTable.columns.items[cur.x].name.items);
+            }
+            if (mode_key == 'a') {
+                editor.end();
+                mode_key = 'i';
+            }
+        } else if (mode_key == 'C') {
+            mode_key = 'i';
+        } else {
+            @panic("Unkown mode key");
+        }
     }
 }
 
 fn exitInsertMode() !void {
-    mode_key = 0;
-    if (cur.y == 0) {
-        renderTable.renameColumnAt(cur.x, editor.line()) catch {};
-    } else {
-        const value = try Value.parse(editor.line());
-        try setAt(cur.x, cur.y - 1, value);
+    if (mode_key == 'i') {
+        mode_key = 0;
+        if (cur.y == 0) {
+            renderTable.renameColumnAt(cur.x, editor.line()) catch {};
+        } else {
+            const value = try Value.parse(editor.line());
+            try setAt(cur.x, cur.y - 1, value);
+        }
+        try editor.deleteAll();
+        try saveTable(); // TODO: xxx
+    } else if (mode_key == ':') {
+        // TODO
+        try parseCommand(editor.line());
+        mode_key = 0;
+        try editor.deleteAll();
     }
-    try editor.deleteAll();
-    try saveTable(); // TODO: xxx
+}
+
+fn parseCommand(cmd: []const u8) !void {
+    if (std.mem.eql(u8, "e ", cmd[0..2])) {
+        try loadTable(cmd[2..]);
+        max_cells = countCells();
+    } else {
+        dbg("unknown command {s}\n", .{cmd});
+        @panic("unknown command");
+    }
+}
+
+fn loadTable(name: []const u8) !void {
+    renderTable.deinit();
+    renderTable = Table.fromCSV(name) catch
+        Table.init(name) catch {
+        @panic("error initializing table");
+    };
+    cur.x = 0;
+    cur.y = 1;
 }
 
 fn mainloop() !void {
@@ -342,7 +383,7 @@ fn mainloop() !void {
         var it = spoon.inputParser(buf[0..read]);
         while (it.next()) |in| {
             // ESC should exit any mode
-            if (mode_key != 0 and mode_key != 'i') {
+            if (mode_key != 0 and mode_key != 'i' and mode_key != ':') {
                 _ = switch (in.content) {
                     .escape => {
                         mode_key = 0;
@@ -368,7 +409,7 @@ fn mainloop() !void {
                         } else {
                             _ = switch (cp) {
                                 // edit mode
-                                'C', 'a', 'i' => try enterInsertMode(@truncate(u8, cp)), // replace/append/insert: enter edit mode for cell
+                                'C', 'a', 'i', ':' => try enterInsertMode(@truncate(u8, cp)), // replace/append/insert: enter edit mode for cell
                                 // insert/delete/copy/paste
                                 'D' => mode_key = 'D', // delete
                                 'P' => mode_key = 'P', // paste
@@ -379,6 +420,7 @@ fn mainloop() !void {
                                 'o' => try insertRow(cur.y),
                                 '+' => try insertColumn(cur.x),
                                 'x' => try delete(),
+                                '.' => try insertToday(),
                                 // movement
                                 'H' => try moveCursor(-large_step, 0),
                                 'J' => try moveCursor(0, large_step),
@@ -387,7 +429,11 @@ fn mainloop() !void {
                                 'h' => try moveCursor(-1, 0),
                                 'j' => try moveCursor(0, 1),
                                 'k' => try moveCursor(0, -1),
-                                'l' => try moveCursor(1, 0),
+                                'l', 9 => try moveCursor(1, 0),
+                                '0' => cur.x = 0,
+                                '$' => cur.x = renderTable.columns.items.len - 1,
+                                'g' => cur.y = 1,
+                                'G' => cur.y = if (renderTable.columns.items.len == 0) 1 else renderTable.columns.items[0].rows.items.len,
                                 // quit
                                 'q' => break :loop,
                                 else => {},
@@ -424,7 +470,7 @@ fn mainloop() !void {
                     };
                     mode_key = 0;
                 },
-                'i' => switch (in.content) { // mode_key == 'i'
+                'i', ':' => switch (in.content) { // mode_key == 'i'
                     .escape => try exitInsertMode(),
                     .codepoint => |cp_u21| {
                         if (cp_u21 < 256) {
@@ -445,14 +491,18 @@ fn mainloop() !void {
                                     //' ', '0'...'9', 'A'...'Z', 'a'...'z' => try editor.append(cp),
 
                                     9 => { // Tab
-                                        try exitInsertMode();
-                                        cur.x += 1;
-                                        try enterInsertMode('a');
+                                        if (mode_key == 'i') {
+                                            try exitInsertMode();
+                                            cur.x += 1;
+                                            try enterInsertMode('a');
+                                        }
                                     },
                                     10 => { // Enter
                                         try exitInsertMode();
-                                        cur.y += 1;
-                                        try enterInsertMode('a');
+                                        if (mode_key == 'i') {
+                                            cur.y += 1;
+                                            try enterInsertMode('a');
+                                        }
                                     },
                                     32...126 => try editor.insert(cp),
                                     127 => try editor.deleteLeftOfCursor(),
@@ -594,29 +644,47 @@ pub const Editor = struct {
     }
 };
 
-fn render(_: *spoon.Term, _: usize, columns: usize) !void {
+fn render(_: *spoon.Term, term_rows: usize, term_columns: usize) !void {
     var line = std.ArrayList(u8).init(croc);
     defer line.deinit();
 
     try term.clear();
-    try term.fetchSize(); // term.height and term.width will contain the size
+    // try term.fetchSize(); // term.height and term.width will contain the size
 
-    try term.moveCursorTo(0, 0);
-    try term.setAttribute(.{ .fg = .green, .reverse = true });
+    // print the status bar
+    try term.moveCursorTo(term_rows - 1, 0);
+    if (mode_key == ':') { // show edit line
+        const prompt: []const u8 = ":";
+        // the text
+        try term.setAttribute(.{ .fg = .yellow, .reverse = false });
+        const width = editor.len();
+        _ = try term.writeLine(prompt.len, prompt);
+        _ = try term.writeLine(width, editor.line());
+        // try term.writeByteNTimes(' ', remaining);
 
-    try line.resize(0);
-    const mode_name: []const u8 = switch (mode_key) {
-        0 => "normal",
-        'd', 'D' => "delete",
-        'i', 'a' => "insert",
-        'y', 'Y' => "copy",
-        'p', 'P' => "paste",
-        'g' => "go to",
-        else => @panic("Unknown mode"),
-    };
-    try line.writer().print("Table: {s} - {s}", .{ renderTable.name.items, mode_name });
-    var remaining_columns = try term.writeLine(columns, line.items);
-    try term.writeByteNTimes(' ', remaining_columns);
+        // the cursor
+        try term.moveCursorTo(term_rows - 1, prompt.len + editor.cur.x);
+        try term.setAttribute(.{ .fg = .bright_blue, .reverse = true });
+        var key: u8 = ' ';
+        if (editor.cur.x < editor.len()) key = editor.line()[editor.cur.x];
+        try term.writeByte(key);
+    } else {
+        try term.setAttribute(.{ .fg = .green, .reverse = true });
+        try line.resize(0);
+        const mode_name: []const u8 = switch (mode_key) {
+            0 => "normal",
+            'd', 'D' => "delete",
+            'i', 'a' => "insert",
+            'y', 'Y' => "copy",
+            'p', 'P' => "paste",
+            'g' => "go to",
+            ':' => "command",
+            else => @panic("Unknown mode"),
+        };
+        try line.writer().print("Table: {s} - {s}", .{ renderTable.name.items, mode_name });
+        var remaining_columns = try term.writeLine(term_columns, line.items);
+        try term.writeByteNTimes(' ', remaining_columns);
+    }
 
     // constants and variables
     var col_total_width: usize = 0;
@@ -649,37 +717,27 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
     offset.x = 0;
     col_idx = cur.x + 1;
     while (true) : (offset.x += 1) {
-        dbg("c1\n", .{});
         if (!(col_idx > offset.x)) break;
-        dbg("c2\n", .{});
         if (!(col_idx - offset.x < term_col_pos.items.len)) break;
-        dbg("c3\n", .{});
         if (!(col_idx - offset.x < term_col_width.items.len)) break;
-        dbg("c4\n", .{});
         if (!(col_idx + 1 < term_col_pos.items.len)) break;
-        dbg("c5\n", .{});
         const last_col_start = term_col_pos.items[col_idx];
         const last_col_width = term_col_width.items[col_idx];
         const first = term_col_width.items[0];
         const offset_start = term_col_pos.items[offset.x];
         const text_width = last_col_start + last_col_width - offset_start + first;
-        dbg("offset.x: {d}, ", .{offset.x});
-        dbg("offset_start: {d}, ", .{offset_start});
-        dbg("text_width: {d}, ", .{text_width});
-        dbg("term.width: {d}\n", .{term.width});
-        if (text_width <= term.width) break;
-        //if (!(term_col_pos.items[col_idx] + term_col_width.items[col_idx] - term_col_pos.items[offset.x] > term.width)) break;
+        if (text_width <= term_columns) break;
+        //if (!(term_col_pos.items[col_idx] + term_col_width.items[col_idx] - term_col_pos.items[offset.x] > term_columns)) break;
     }
-    dbg("------\n", .{});
 
-    if (cur.x + offset.x > term.width) offset.x = cur.x - term.width;
-    offset.y = if (Settings.top_rows + 1 + cur.y > term.height) Settings.top_rows + 1 + cur.y - term.height else 0;
+    if (cur.x + offset.x > term_columns) offset.x = cur.x - term_columns;
+    offset.y = if (Settings.top_rows + 1 + cur.y > term_rows - Settings.bottom_rows) Settings.top_rows + 1 + cur.y - (term_rows - Settings.bottom_rows) else 0;
 
     // print column contents
     const num_rows = getMaxRowCount();
     var row_idx: usize = offset.y;
     // loop rows
-    while (row_idx - offset.y <= term.height - Settings.top_rows and (row_idx < num_rows + 1 or row_idx <= cur.y)) : (row_idx += 1) {
+    while (row_idx - offset.y <= term_rows - Settings.top_rows - Settings.bottom_rows and (row_idx < num_rows + 1 or row_idx <= cur.y)) : (row_idx += 1) {
         // print row number
         try term.setAttribute(.{ .fg = .red, .bold = true });
         try term.moveCursorTo(row_idx - offset.y + Settings.top_rows - 1, term_col_pos.items[0]);
@@ -701,13 +759,6 @@ fn render(_: *spoon.Term, _: usize, columns: usize) !void {
             const offset_start = term_col_pos.items[offset.x + 1];
             const cursor_start = col_start - offset_start + first;
             try term.moveCursorTo(row_idx - offset.y + Settings.top_rows - 1, cursor_start);
-            if (row_idx == 2) {
-                dbg("col_idx: {d}, ", .{col_idx});
-                dbg("offset.x: {d}, ", .{offset.x});
-                dbg("col_start: {d}, ", .{col_start});
-                dbg("first: {d}, ", .{first});
-                dbg("offset_start: {d}\n", .{offset_start});
-            }
             // display edit text instead of saved cell content
             if (mode_key == 'i' and cur.x == col_idx and cur.y == row_idx) {
                 // the text
