@@ -12,6 +12,7 @@ ps -u $USER -eo comm | grep -wq zspread && {
 #(cd lib/zdb/ && zig build test; echo -----------------------------------------)
 #zig build test 2>&1 | cat
 
+zig fmt build.zig src/*.zig lib/zdb/src/*.zig
 zig build && touch run_me
 echo --------------------------------------------------------------------------------
 

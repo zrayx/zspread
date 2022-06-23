@@ -22,6 +22,7 @@ const Settings = struct {
     const top_rows: usize = 1; // headers
     const bottom_rows: usize = 1; // status line + edit
 };
+var page_height: i32 = 15;
 
 const Pos = struct {
     x: usize,
@@ -91,10 +92,7 @@ pub fn main() !void {
 
     try term.fetchSize();
 
-    var title = std.ArrayList(u8).init(croc);
-    defer title.deinit();
-    try title.writer().print("db/{s}.csv - zspread", .{renderTable.name.items});
-    try term.setWindowTitle("{s}", .{title.items});
+    try setWindowTitle();
     defer term.setWindowTitle("bash", .{}) catch {};
     try term.updateContent();
 
@@ -111,7 +109,14 @@ fn moveCursor(dx: i32, dy: i32) !void {
     const new_y: i32 = @intCast(i32, cur.y) + dy;
     if (new_x < 0) cur.x = 0 else cur.x = @intCast(usize, new_x);
     if (new_y < 0) cur.y = 0 else cur.y = @intCast(usize, new_y);
-    try term.updateContent();
+}
+
+fn moveEnd() void {
+    if (renderTable.columns.items.len == 0) {
+        cur.y = 1;
+    } else {
+        cur.y = renderTable.columns.items[0].rows.items.len;
+    }
 }
 
 fn copy(mode: CopyMode) !void {
@@ -121,7 +126,6 @@ fn copy(mode: CopyMode) !void {
 
 fn insertToday() !void {
     const v = Value.today();
-    dbg("today: {any}\n", .{v});
     try setAt(cur.x, cur.y - 1, v);
     try saveTable();
 }
@@ -342,10 +346,38 @@ fn exitInsertMode() !void {
     }
 }
 
+fn editDown() !void {
+    if (mode_key == 'i') {
+        try exitInsertMode();
+        cur.y += 1;
+        try enterInsertMode('a');
+    } else {
+        try exitInsertMode();
+    }
+}
+
+fn editUp() !void {
+    if (mode_key == 'i') {
+        try exitInsertMode();
+        if (cur.y > 1) cur.y -= 1;
+        try enterInsertMode('a');
+    } else {
+        try exitInsertMode();
+    }
+}
+
+fn setWindowTitle() !void {
+    var title = std.ArrayList(u8).init(croc);
+    defer title.deinit();
+    try title.writer().print("db/{s}.csv - zspread", .{renderTable.name.items});
+    try term.setWindowTitle("{s}", .{title.items});
+}
+
 fn parseCommand(cmd: []const u8) !void {
     if (std.mem.eql(u8, "e ", cmd[0..2])) {
         try loadTable(cmd[2..]);
         max_cells = countCells();
+        try setWindowTitle();
     } else {
         dbg("unknown command {s}\n", .{cmd});
         @panic("unknown command");
@@ -404,6 +436,10 @@ fn mainloop() !void {
                                 'k' => try moveCursor(0, -huge_step),
                                 'l' => try moveCursor(huge_step, 0),
                                 'v' => try paste(),
+                                'b' => try moveCursor(0, -page_height),
+                                'f' => try moveCursor(0, page_height),
+                                'u' => try moveCursor(0, -@divTrunc(page_height, 2) - 1),
+                                'd' => try moveCursor(0, @divTrunc(page_height, 2) + 1),
                                 else => {},
                             };
                         } else {
@@ -433,7 +469,7 @@ fn mainloop() !void {
                                 '0' => cur.x = 0,
                                 '$' => cur.x = renderTable.columns.items.len - 1,
                                 'g' => cur.y = 1,
-                                'G' => cur.y = if (renderTable.columns.items.len == 0) 1 else renderTable.columns.items[0].rows.items.len,
+                                'G' => moveEnd(),
                                 // quit
                                 'q' => break :loop,
                                 else => {},
@@ -444,6 +480,10 @@ fn mainloop() !void {
                     .arrow_right => try moveCursor(1, 0),
                     .arrow_up => try moveCursor(0, -1),
                     .arrow_down => try moveCursor(0, 1),
+                    .end => moveEnd(),
+                    .home => cur.y = 1,
+                    .page_up => try moveCursor(0, -page_height),
+                    .page_down => try moveCursor(0, page_height),
                     else => {},
                 },
                 'd' => { // mode_key == 'd'
@@ -497,13 +537,8 @@ fn mainloop() !void {
                                             try enterInsertMode('a');
                                         }
                                     },
-                                    10 => { // Enter
-                                        try exitInsertMode();
-                                        if (mode_key == 'i') {
-                                            cur.y += 1;
-                                            try enterInsertMode('a');
-                                        }
-                                    },
+                                    // Enter
+                                    10 => try editDown(),
                                     32...126 => try editor.insert(cp),
                                     127 => try editor.deleteLeftOfCursor(),
                                     228 => try editor.insertMultiple("ä"),
@@ -523,15 +558,15 @@ fn mainloop() !void {
                         }
                     },
                     .delete => try editor.deleteRightOfCursor(),
-                    //.insert => {},
+                    .insert => try editor.insertLeft(' '),
                     .end => editor.end(),
                     .home => editor.home(),
                     //.page_up => {},
                     //.page_down => {},
                     .arrow_left => editor.left(),
                     .arrow_right => editor.right(),
-                    // .arrow_up  (also: mouse wheel)
-                    // .arrow_down (also: mouse wheel)
+                    .arrow_up => try editUp(),
+                    .arrow_down => try editDown(),
                     else => {
                         dbg("Unknown in.content type {}\n", .{in.content});
                     },
@@ -632,15 +667,19 @@ pub const Editor = struct {
         self.cur.x += 1;
     }
 
-    pub fn set(self: *Self, string: []const u8) !void {
-        try self.content.resize(0);
-        try self.content.appendSlice(string);
+    pub fn insertLeft(self: *Self, char: u8) !void {
+        try self.content.insert(self.cur.x, char);
     }
 
     pub fn insertMultiple(self: *Self, string: []const u8) !void {
         for (string) |char| {
             try self.insert(char);
         }
+    }
+
+    pub fn set(self: *Self, string: []const u8) !void {
+        try self.content.resize(0);
+        try self.content.appendSlice(string);
     }
 };
 
@@ -649,7 +688,11 @@ fn render(_: *spoon.Term, term_rows: usize, term_columns: usize) !void {
     defer line.deinit();
 
     try term.clear();
-    // try term.fetchSize(); // term.height and term.width will contain the size
+    // for use outside render()
+    page_height = if (term_rows > 2 + Settings.top_rows + Settings.bottom_rows)
+        @intCast(i32, @truncate(u31, term_rows - Settings.top_rows - Settings.bottom_rows)) - 2
+    else
+        1;
 
     // print the status bar
     try term.moveCursorTo(term_rows - 1, 0);
