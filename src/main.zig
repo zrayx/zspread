@@ -484,6 +484,7 @@ fn mainloop() !void {
                     .home => cur.y = 1,
                     .page_up => try moveCursor(0, -page_height),
                     .page_down => try moveCursor(0, page_height),
+                    .delete => try delete(),
                     else => {},
                 },
                 'd' => { // mode_key == 'd'
